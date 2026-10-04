@@ -2,6 +2,7 @@
 import { Game } from '../src/sim/game.ts';
 import { N, tileIdx, DX, DY, inMap } from '../src/sim/world.ts';
 import { DAY } from '../src/sim/types.ts';
+import { MODE_ORDER, type Mode } from '../src/sim/modes.ts';
 
 const seed = +(process.argv[2] ?? 1);
 const days = +(process.argv[3] ?? 12);
@@ -9,10 +10,13 @@ const gentle = process.argv[4] === 'gentle';
 const g = new Game(seed);
 const w = g.world;
 g.money = 1e7;
+for (const k of ['tram', 'ferry', 'gondola', 'metro'] as const) g.unlocked[k] = true;
 const R = () => g.rand();
 let ops = 0;
 function randTile() { return Math.floor(R() * N * N); }
 function randRoad() { for (let k = 0; k < 200; k++) { const t = randTile(); if (w.road[t]) return t; } return -1; }
+function randShore() { for (let k = 0; k < 300; k++) { const t = randTile(); if (w.shore[t]) return t; } return randTile(); }
+function randSpot(m: Mode) { return m === 'bus' || m === 'tram' ? randRoad() : m === 'ferry' ? randShore() : randTile(); }
 function act() {
   ops++;
   (globalThis as any).__lastop = 'start';
@@ -30,14 +34,14 @@ function act() {
   else if (r < 0.41) g.bulldoze(randRoad() >= 0 ? randRoad() : 0);
   else if (r < 0.48) { for (const d of w.districts) if (!d.unlocked) { g.unlockDistrict(d.index); break; } }
   else if (r < 0.58) { const a = randRoad(), b = randRoad(), c = randRoad(); if (a >= 0 && b >= 0 && c >= 0) g.createBusLine([a, b, c].filter((v, i, arr) => arr.indexOf(v) === i)); }
-  else if (r < 0.64) { const a = randTile(), b = randTile(); g.createMetroLine([a, b]); }
+  else if (r < 0.64) { const m = MODE_ORDER[1 + ((R() * 4) | 0)]; const a = randSpot(m), b = randSpot(m); if (a >= 0 && b >= 0) { const ts = R() < 0.4 ? [a, b, randSpot(m)].filter((v, i, arr) => v >= 0 && arr.indexOf(v) === i) : [a, b]; g.createLine(m, ts); } }
   else if (r < 0.70) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.addVehicle(l); }
   else if (r < 0.74) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.removeVehicle(l); }
   else if (r < 0.77) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.deleteLine(l); }
   else if (r < 0.80) { const s = g.transit.stops[(R() * g.transit.stops.length) | 0]; if (s) g.expandStop(s); }
   else if (r < 0.84) g.placePark(randTile());
   else if (r < 0.87) { const keys = ['toll', 'busLanes', 'stagger', 'remote', 'freeTransit'] as const; g.setPolicy(keys[(R() * 5) | 0], R() < 0.5); }
-  else if (r < 0.90) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) { if (l.kind === 'bus') g.transit.extendBus(l, randRoad()); else g.transit.extendMetro(l, randTile()); } }
+  else if (r < 0.90) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.extendLine(l, randSpot(l.kind)); }
   else if (r < 0.93) g.bulldoze(w.stop[randTile()] >= 0 ? randTile() : randTile());
   else { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) { const s = l.stops[(R() * l.stops.length) | 0]; g.bulldoze(s.tile); } }
 }
@@ -51,6 +55,13 @@ function check() {
   for (const p of g.city.persons) if (!p.home || p.home.residents.indexOf(p) < 0) throw new Error('person not in home');
   for (const s of g.transit.stops) if (w.stop[s.tile] !== s.id) throw new Error('stop map mismatch');
   for (const l of g.transit.lines) for (const s of l.stops) if (!g.transit.stopById.has(s.id)) throw new Error('line has dead stop');
+  for (const l of g.transit.lines) {
+    if (l.kind === 'bus') continue;
+    if (!l.poly || l.stopIdx.length !== l.stops.length || l.stopDist.length !== l.stops.length) throw new Error(`line ${l.name} geometry mismatch`);
+    for (let k = 1; k < l.stopDist.length; k++) if (l.stopDist[k] < l.stopDist[k - 1] - 1e-6) throw new Error(`line ${l.name} stops out of order`);
+    for (const c of l.vehicles) { if (!isFinite(c.d) || c.d < -0.01 || c.d > l.poly.length + 0.01) throw new Error(`carrier off its line ${l.name} d=${c.d} len=${l.poly.length}`); if (!isFinite(c.speed)) throw new Error('carrier NaN speed'); }
+  }
+  for (const p of g.city.persons) if ((p.phase === 'wait') && p.stopRef && !g.transit.stopById.has(p.stopRef.id)) throw new Error('person waiting at a removed stop');
   for (let i = 0; i < N * N; i++) { const c = g.traffic.tileCars[i]; for (const v of c) if (v.dead) throw new Error('dead car in tile list'); }
 }
 const dt = 0.1;

@@ -7,6 +7,7 @@ import { h, icon, money, fmt } from './dom.ts';
 import { Tools } from './tools.ts';
 import { Hud } from './hud.ts';
 import { Panels } from './panels.ts';
+import { MODES, MODE_ORDER } from '../sim/modes.ts';
 import type { Quality } from '../render/renderer.ts';
 
 const SAVE_KEY = 'rushline.save.v1';
@@ -31,7 +32,7 @@ export class App {
   private coachT = 0;
   private coachStart = { roads: 0, dist: 0, tx: 0, tz: 0, lines: 0 };
   private quality: Quality = 'high';
-  private prefs: { quality?: Quality; music?: boolean; muted?: boolean; coach?: boolean; diff?: number } = {};
+  private prefs: { v?: number; quality?: Quality; music?: boolean; muted?: boolean; coach?: boolean; diff?: number; advisor?: boolean; autoFleet?: boolean } = {};
   private lastSaveDay = 0;
   private overShown = false;
   private hintsShown = new Set<string>();
@@ -43,6 +44,9 @@ export class App {
   constructor(readonly game: Game, readonly view: View, opts: { title: boolean }) {
     this.ui = document.getElementById('ui')!;
     try { this.prefs = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}'); } catch { this.prefs = {}; }
+    if (this.prefs.v !== 2) { delete this.prefs.diff; this.prefs.v = 2; }
+    game.advisorOn = this.prefs.advisor ?? true;
+    game.autoFleet = this.prefs.autoFleet ?? true;
     const mobile = matchMedia('(pointer: coarse)').matches || innerWidth < 760;
     this.quality = this.prefs.quality ?? (mobile ? 'medium' : 'high');
     view.renderer.setQuality(this.quality);
@@ -74,6 +78,14 @@ export class App {
     g.on('gameOver', (info: any) => this.showGameOver(info));
     g.on('dayEnd', () => this.autosave());
     g.on('bldRemove', () => this.panels.sync());
+    g.on('advice', () => this.hud.refreshAdvice());
+    let lastDepart = 0;
+    g.on('depart', (e: { kind: string; x: number; z: number }) => {
+      const r = this.view.rig, now = performance.now();
+      if (now - lastDepart < 1500 || r.dist > 30 || this.titleMode || Math.hypot(e.x - r.target.x, e.z - r.target.z) > 11) return;
+      lastDepart = now;
+      this.sound.sfx(e.kind === 'ferry' ? 'horn' : 'bell');
+    });
   }
 
   toast(msg: string, tone: 'info' | 'warn' | 'bad' | 'good' = 'info') { this.hud.toast(msg, tone); }
@@ -113,6 +125,7 @@ export class App {
   togglePause() { this.setSpeed(this.game.speed === 0 ? 1 : 0); }
   toggleMute() { this.sound.setMuted(!this.sound.muted); this.savePrefs(); this.toast(this.sound.muted ? 'Sound off' : 'Sound on', 'info'); }
   private savePrefs() {
+    this.prefs.advisor = this.game.advisorOn; this.prefs.autoFleet = this.game.autoFleet;
     this.prefs.quality = this.quality; this.prefs.music = this.sound.musicOn; this.prefs.muted = this.sound.muted;
     try { localStorage.setItem(PREF_KEY, JSON.stringify(this.prefs)); } catch { /* private mode */ }
   }
@@ -182,11 +195,11 @@ export class App {
   private showTitle() {
     this.game.speed = 0.35;
     const save = hasSave() ? loadSave() : null;
-    let diff = this.prefs.diff ?? this.game.diff;
+    let diff = this.prefs.diff ?? 0;
     const diffBtns: HTMLElement[] = [];
     const names = ['Relaxed', 'Standard', 'Rush'];
     const dsub = h('div', { class: 'meta' }, '');
-    const setDiff = (d: number) => { diff = d; this.prefs.diff = d; this.savePrefs(); diffBtns.forEach((b, i) => b.classList.toggle('on', i === d)); dsub.textContent = ['The city grows gently and forgives mistakes.', 'A steady climb. Traffic bites around 1,500 residents.', 'Fast growth and little slack. For people who like a fight.'][d]; };
+    const setDiff = (d: number) => { diff = d; this.prefs.diff = d; this.savePrefs(); diffBtns.forEach((b, i) => b.classList.toggle('on', i === d)); dsub.textContent = ['More cash, slower growth and a lot of forgiveness. A helper suggests fixes.', 'A steady climb. Traffic bites around 2,000 residents.', 'Fast growth and little slack. For people who like a fight.'][d]; };
     names.forEach((n, i) => diffBtns.push(h('button', { class: 'seg', onClick: () => { setDiff(i); this.sound.init(); this.sound.sfx('tick'); } }, n)));
     const btns = h('div', { class: 'btns' },
       h('button', { class: 'btn primary', onClick: () => { this.sound.init(); if (diff !== this.game.diff) { this.newCity(diff); return; } this.modal?.remove(); this.modal = null; this.beginPlay(); this.sound.sfx('unlock'); } }, 'Play'),
@@ -197,8 +210,9 @@ export class App {
       h('div', { class: 'hero' },
         h('div', { class: 'logo' }, h('div', { html: '<svg width="54" height="54" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#ffb02e"/><path d="M13 45h14l8-25h16" fill="none" stroke="#2a1a00" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13" cy="45" r="5.5" fill="#fff"/><circle cx="51" cy="20" r="5.5" fill="#fff"/></svg>' })),
         h('h1', {}, 'Rushline'),
-        h('div', { class: 'tag-line' }, 'Your city is growing faster than its streets. Build the roads, buses and metro that keep it moving before it grinds to a halt.'),
+        h('div', { class: 'tag-line' }, 'Your city is growing faster than its streets. Lay the roads, then run buses, trams, metro, ferries and cable cars to keep it moving.'),
         btns,
+        h('div', { class: 'title-modes' }, ...MODE_ORDER.map((m) => { const sp = h('span', {}, icon(MODES[m].icon), MODES[m].label); sp.style.setProperty('--mc', '#' + MODES[m].color.toString(16).padStart(6, '0')); return sp; })),
         h('div', { class: 'dock-l', style: { position: 'static', padding: '4px', marginTop: '6px' } }, ...diffBtns),
         dsub,
         h('div', { class: 'meta' }, 'Drag to look around · scroll to zoom · build with the toolbar')));
@@ -222,11 +236,14 @@ export class App {
         h('div', { class: 'row' }, h('span', { class: 'k' }, 'Sound'), h('div', { class: 'actions' },
           h('button', { class: 'btn sm', onClick: () => { this.toggleMute(); this.openPauseRefresh(); } }, this.sound.muted ? 'Off' : 'On'),
           h('button', { class: 'btn sm', onClick: () => { this.sound.musicOn = !this.sound.musicOn; this.savePrefs(); this.openPauseRefresh(); } }, this.sound.musicOn ? 'Music on' : 'Music off'))),
+        h('div', { class: 'row' }, h('span', { class: 'k' }, 'Helpers'), h('div', { class: 'actions' },
+          h('button', { class: 'btn sm' + (this.game.advisorOn ? ' on' : ''), title: 'Suggests one-click fixes', onClick: () => { this.game.advisorOn = !this.game.advisorOn; if (this.game.advisorOn) this.game.refreshAdvice(); else { this.game.advice = []; this.game.emit('advice', []); } this.savePrefs(); this.openPauseRefresh(); } }, this.game.advisorOn ? 'Advisor on' : 'Advisor off'),
+          h('button', { class: 'btn sm' + (this.game.autoFleet ? ' on' : ''), title: 'Buys vehicles for crowded lines', onClick: () => { this.game.autoFleet = !this.game.autoFleet; this.savePrefs(); this.openPauseRefresh(); } }, this.game.autoFleet ? 'Auto-fleet on' : 'Auto-fleet off'))),
         h('div', { class: 'keys' },
           h('kbd', {}, 'Right-drag'), h('span', {}, 'Pan the map'),
           h('kbd', {}, 'Scroll'), h('span', {}, 'Zoom to the cursor'),
           h('kbd', {}, 'Q E'), h('span', {}, 'Rotate · R F tilt'),
-          h('kbd', {}, '1–8'), h('span', {}, 'Choose a tool'),
+          h('kbd', {}, '1–7'), h('span', {}, 'Choose a tool · 4 again or [ ] swaps bus/tram/metro/ferry/gondola'),
           h('kbd', {}, 'Enter'), h('span', {}, 'Finish a line'),
           h('kbd', {}, 'G T H'), h('span', {}, 'Traffic, transit, mood views'),
           h('kbd', {}, 'Space'), h('span', {}, 'Pause · + − speed'),
@@ -268,7 +285,8 @@ export class App {
     this.coachList = [
       { id: 'look', title: 'Look around', text: 'Right-drag to pan, scroll to zoom, Q and E to rotate.', done: () => Math.abs(this.view.rig.gDist - this.coachStart.dist) > 3 || Math.hypot(this.view.rig.gTarget.x - this.coachStart.tx, this.view.rig.gTarget.z - this.coachStart.tz) > 3, after: 14 },
       { id: 'road', title: 'Grow the street grid', text: 'Press 2 for the road tool and drag out from the end of a street. New roads open land for homes and shops.', done: () => this.roadCount() > this.coachStart.roads + 5, after: 70 },
-      { id: 'bus', title: 'Start a bus line', text: 'Press 4, click a few roads to place stops, then Finish. Buses keep people off the roads.', done: () => g.transit.lines.length > this.coachStart.lines, after: 90 },
+      { id: 'bus', title: 'Start a bus line', text: 'Press 4, click a few roads to place stops, then Finish. Or let the advisor (top right) build one for you.', done: () => g.transit.lines.length > this.coachStart.lines, after: 90 },
+      { id: 'advisor', title: 'Lean on the advisor', text: 'The card at the top right offers one-click fixes: add a vehicle, widen a street, build a line. New modes unlock as you grow.', done: () => false, after: 20 },
       { id: 'watch', title: 'Watch the stability bar', text: 'It drops when roads jam or stops overflow. At zero the city fails. Add capacity before it turns red.', done: () => false, after: 16 },
     ];
     this.coachIdx = 0; this.coachT = 0;
@@ -284,7 +302,7 @@ export class App {
     this.coachEl?.remove();
     this.coachEl = null;
     const c = this.coachList[this.coachIdx];
-    this.hud.pulseTool(c?.id === 'road' ? 'road' : c?.id === 'bus' ? 'bus' : null);
+    this.hud.pulseTool(c?.id === 'road' ? 'road' : c?.id === 'bus' ? 'transit' : null);
     if (!c) return;
     const dots = h('div', { class: 'dots' }, ...this.coachList.map((_, i) => h('i', { class: i <= this.coachIdx ? 'on' : '' })));
     this.coachEl = h('div', { class: 'coach glass' }, dots, h('div', {}, h('b', {}, c.title), h('span', {}, c.text)),
@@ -316,6 +334,8 @@ export class App {
   frame(dt: number) {
     const g = this.game, v = this.view;
     this.tools.update(dt);
+    const sel = this.tools.selection;
+    v.highlightLine = sel?.type === 'line' ? sel.id : -1;
     this.hud.update(dt);
     this.panels.update(dt);
     this.updateCoach(dt);

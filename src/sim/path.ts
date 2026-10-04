@@ -1,6 +1,7 @@
 // Routing: A* over the road grid (congestion aware) and over free ground for elevated track.
 import { MinHeap } from './util.ts';
 import { N, DX, DY, tileIdx, tileX, tileY, inMap, type World } from './world.ts';
+import { isSolidCode } from './modes.ts';
 
 export const SPEED_STREET = 1.9;   // tiles per second, free flow
 export const SPEED_AVENUE = 2.7;
@@ -74,10 +75,10 @@ export class TrackRouter {
 
   passable(i: number, lineId: number, goal: number): boolean {
     const w = this.world;
-    if (i === goal) return w.bld[i] < 0 && !w.water[i] && w.rail[i] !== 0 ? w.rail[i] === lineId + 1 || w.stopKind[i] === 2 : w.bld[i] < 0 && !w.water[i];
+    if (i === goal) return w.bld[i] < 0 && !w.water[i] && w.rail[i] !== 0 ? w.rail[i] === lineId + 1 || isSolidCode(w.stopKind[i]) : w.bld[i] < 0 && !w.water[i];
     if (!w.isUnlocked(i)) return false;
     if (w.bld[i] >= 0) return false;
-    if (w.stopKind[i] === 2) return false; // other stations are not drive-through
+    if (isSolidCode(w.stopKind[i])) return false; // other stations are not drive-through
     const r = w.rail[i];
     if (r !== 0 && r !== lineId + 1) return false;
     return true;
@@ -128,6 +129,66 @@ export class TrackRouter {
     if (goalState < 0) return null;
     const path: number[] = [];
     for (let s = goalState; s !== -1; s = came[s]) path.push(s >> 2);
+    path.reverse();
+    return path;
+  }
+}
+
+/** Boat router: 8-neighbour A* over water tiles between two shore piers. Returns [pier, ...water, pier]. */
+export class WaterRouter {
+  private g = new Float32Array(N * N);
+  private came = new Int32Array(N * N);
+  private stamp = new Int32Array(N * N);
+  private cur = 0;
+  private heap = new MinHeap();
+  constructor(private world: World) {}
+
+  private touches(t: number, pier: number) {
+    const x = tileX(t), y = tileY(t), px = tileX(pier), py = tileY(pier);
+    return Math.abs(x - px) + Math.abs(y - py) === 1;
+  }
+
+  /** water tiles from a berth next to `from` (or the fixed `start` berth) to a berth next to `to` */
+  find(from: number, to: number, start = -1): number[] | null {
+    const w = this.world;
+    if (from === to) return null;
+    this.cur++;
+    const cur = this.cur, g = this.g, came = this.came, stamp = this.stamp, heap = this.heap;
+    heap.clear();
+    const tx = tileX(to), ty = tileY(to);
+    const h = (x: number, y: number) => Math.hypot(x - tx, y - ty);
+    if (start >= 0) {
+      g[start] = 0; stamp[start] = cur; came[start] = -1;
+      heap.push(h(tileX(start), tileY(start)), start);
+    } else {
+      for (let d = 0; d < 4; d++) {
+        const nx = tileX(from) + DX[d], ny = tileY(from) + DY[d];
+        if (!inMap(nx, ny)) continue;
+        const n = tileIdx(nx, ny);
+        if (!w.water[n] || w.road[n]) continue;
+        g[n] = 0; stamp[n] = cur; came[n] = -1;
+        heap.push(h(nx, ny), n);
+      }
+    }
+    let goal = -1, guard = 0;
+    while (heap.size && guard++ < 6000) {
+      const c = heap.pop();
+      if (this.touches(c, to)) { goal = c; break; }
+      const cx = tileX(c), cy = tileY(c);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx, ny = cy + dy;
+        if (!inMap(nx, ny)) continue;
+        const n = tileIdx(nx, ny);
+        if (!w.water[n] || w.road[n]) continue;   // low bridges block boats
+        if (dx && dy && (!w.water[tileIdx(cx + dx, cy)] || !w.water[tileIdx(cx, cy + dy)] || w.road[tileIdx(cx + dx, cy)] || w.road[tileIdx(cx, cy + dy)])) continue; // no corner cutting
+        const ng = g[c] + (dx && dy ? 1.414 : 1);
+        if (stamp[n] !== cur || ng < g[n]) { stamp[n] = cur; g[n] = ng; came[n] = c; heap.push(ng + h(nx, ny), n); }
+      }
+    }
+    if (goal < 0) return null;
+    const path: number[] = [];
+    for (let c = goal; c !== -1; c = came[c]) path.push(c);
     path.reverse();
     return path;
   }

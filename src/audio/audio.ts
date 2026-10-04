@@ -83,6 +83,8 @@ export class Sound {
       case 'unlock': this.tone(330, 0.5, 'triangle', 0.16, 0, 2.2); this.tone(660, 0.4, 'sine', 0.1, 0.12); break;
       case 'milestone': [392, 494, 587, 784].forEach((f, i) => { this.tone(f, 0.9, 'sine', 0.13, i * 0.09); this.tone(f * 2, 0.6, 'triangle', 0.05, i * 0.09); }); break;
       case 'over': [330, 262, 196, 131].forEach((f, i) => this.tone(f, 0.9, 'sawtooth', 0.08, i * 0.22)); break;
+      case 'horn': this.tone(98, 0.9, 'sawtooth', 0.07); this.tone(123, 0.9, 'sawtooth', 0.05); this.tone(196, 0.9, 'triangle', 0.04); break;
+      case 'bell': this.tone(1568, 0.34, 'sine', 0.06); this.tone(1568, 0.34, 'sine', 0.05, 0.16); this.tone(2349, 0.2, 'sine', 0.025, 0.02); break;
       case 'error': this.tone(180, 0.14, 'square', 0.08); this.tone(140, 0.18, 'square', 0.08, 0.1); break;
     }
   }

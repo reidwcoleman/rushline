@@ -310,6 +310,7 @@ export class City {
         p.timer -= dt;
         if (p.timer <= 0) {
           const s = p.stopRef!;
+          if (!this.transit.stopById.has(s.id)) { this.strand(p); return; }
           p.phase = 'wait';
           p.waitStart = this.ctx.t;
           s.queue.push(p);

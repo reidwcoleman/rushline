@@ -1,7 +1,7 @@
 // The 3D view: owns the scene and every renderable layer, listens to the game, draws a frame.
 import * as THREE from 'three';
 import { Game } from '../sim/game.ts';
-import { N, HALF, tileIdx, wx, wz, tileX, tileY } from '../sim/world.ts';
+import { N, HALF, tileIdx, wx, wz, tileX, tileY, WATER_LEVEL } from '../sim/world.ts';
 import { hourOf } from '../sim/types.ts';
 import { U } from './gfx.ts';
 import { Renderer } from './renderer.ts';
@@ -44,6 +44,7 @@ export class View {
   transitDirty = true;
   mode: OverlayMode = 'none';
   showRoutes = false;
+  highlightLine = -1;
   fixedHour: number | null = null;
   wind: [number, number] = [0.5, 0.2];
   cursors: { tile: number; style: 'ok' | 'bad' | 'info' | 'gold' }[] = [];
@@ -52,6 +53,12 @@ export class View {
   private festival: { x: number; z: number } | null = null;
   private happyDirty = true;
   private happyTimer = 0;
+  private cableDirtyAt = -1;
+  private pmrem: THREE.PMREMGenerator;
+  private envScene = new THREE.Scene();
+  private envRT: THREE.WebGLRenderTarget | null = null;
+  private envT = 0;
+  private wakeT = 0;
   private routesKey = '';
   private frameNo = 0;
   intro = false;
@@ -69,6 +76,9 @@ export class View {
     this.land = new Land(game.world, this.scene);
     this.sky = new Sky(this.scene);
     this.tod = new TimeOfDay(this.scene, this.sky, this.land);
+    // image-based lighting: the live sky, so glass, paint and wet asphalt reflect it
+    this.pmrem = new THREE.PMREMGenerator(this.renderer.gl);
+    this.envScene.add(new THREE.Mesh(this.sky.mesh.geometry, this.sky.mat));
     this.roads = new Roads(game.world, this.scene);
     this.buildings = new BuildingsView(this.scene);
     this.props = new Props(game.world, this.scene);
@@ -79,6 +89,14 @@ export class View {
     this.rain = new Rain(this.scene);
     this.life = new Life(this.scene, game.world);
     this.parks = new ParksView(this.scene, game.world);
+    this.tgfx.clearance = (x, z) => {
+      const tx = Math.floor(x + HALF), ty = Math.floor(z + HALF);
+      if (tx < 0 || ty < 0 || tx >= N || ty >= N) return 0;
+      const id = game.world.bld[tileIdx(tx, ty)];
+      if (id < 0) return 0;
+      const b = game.city.buildings.get(id);
+      return b ? this.buildings.heightOf(b) : 0;
+    };
     this.bind();
     this.rig.gTarget.set(0, 0, 0);
     this.rig.snap();
@@ -88,9 +106,9 @@ export class View {
   bind() {
     const game = this.game;
     for (const b of game.city.buildings.values()) this.buildings.add(b, 0, false);
-    game.on('bldAdd', (b) => { this.buildings.add(b, this.time, true); this.fx.dust(wx(b.x), wz(b.y)); this.happyDirty = true; });
+    game.on('bldAdd', (b) => { this.buildings.add(b, this.time, true); this.fx.dust(wx(b.x), wz(b.y)); this.happyDirty = true; this.cableDirtyAt = this.time; });
     game.on('bldRemove', (e) => { this.buildings.remove(e.b); this.fx.dust(wx(e.b.x), wz(e.b.y)); });
-    game.on('bldLevel', (b) => { this.buildings.relevel(b, this.time); this.fx.dust(wx(b.x), wz(b.y)); });
+    game.on('bldLevel', (b) => { this.buildings.relevel(b, this.time); this.fx.dust(wx(b.x), wz(b.y)); this.cableDirtyAt = this.time; });
     game.on('bldRot', (b) => this.buildings.rotate(b));
     game.on('roadsChanged', () => { this.roadsDirty = true; });
     game.on('treesChanged', () => this.props.refreshTrees());
@@ -154,13 +172,24 @@ export class View {
     if (this.titleShift > 0.002) { this.rig.camera.setViewOffset(innerWidth, innerHeight, -innerWidth * 0.19 * this.titleShift, 0, innerWidth, innerHeight); this.shiftApplied = true; }
     else if (this.shiftApplied) { this.rig.camera.clearViewOffset(); this.shiftApplied = false; }
     this.tod.update(hour, this.rainAmt, dt);
+    this.envT -= dt;
+    if (this.envT <= 0) {
+      this.envT = this.game.speed >= 4 ? 1.2 : 2.4;
+      const rt = this.pmrem.fromScene(this.envScene, 0, 1, 1000);
+      this.envRT?.dispose();
+      this.envRT = rt;
+      this.scene.environment = rt.texture;
+    }
+    this.scene.environmentIntensity = 0.36 - this.tod.night * 0.12;
     this.renderer.setExposure(1.0);
     this.rig.update(dt);
     this.buildings.update(this.time);
     this.roads.setOverlay(this.mode === 'traffic' ? 1 : 0, game.traffic.cong, game.traffic.load);
     // lights and pools
     this.props.update();
-    this.fleet.update(game.traffic, game.transit, this.accidents);
+    if (this.cableDirtyAt >= 0 && this.time - this.cableDirtyAt > 4) { this.cableDirtyAt = -1; if (game.transit.lines.some((l) => l.kind === 'gondola')) this.tgfx.rebuildCables(); }
+    this.fleet.update(game.traffic, game.transit, this.accidents, (l, d) => this.tgfx.cableY(l, d), this.time);
+    this.wakes(dt);
     this.tgfx.updateCrowd(this.time);
     // smoke
     const gust = 0.6 + 0.4 * Math.sin(this.time * 0.13);
@@ -170,6 +199,7 @@ export class View {
     this.rain.update(dt, this.rig.target);
     this.life.update(dt, this.time);
     this.life.setNight(this.tod.night + this.rainAmt);
+    this.life.setWalkers(Math.min(300, Math.floor(game.pop / 9)) * (1 - Math.min(0.75, this.tod.night * 0.75 + this.rainAmt * 0.4)));
     // cursors, rings, routes
     this.overlay.setCursors(this.cursors);
     this.overlay.clearRings();
@@ -202,17 +232,19 @@ export class View {
 
   private updateRoutes() {
     const tr = this.game.transit;
-    const key = `${this.showRoutes}|` + tr.lines.map((l) => `${l.id}:${l.stops.length}:${l.tiles.length}`).join(',');
+    const key = `${this.showRoutes}|${this.highlightLine}|` + tr.lines.map((l) => `${l.id}:${l.stops.length}:${l.tiles.length}`).join(',');
     if (key === this.routesKey) return;
     this.routesKey = key;
     this.overlay.clearRoutes('line:');
-    if (!this.showRoutes) return;
+    if (!this.showRoutes && this.highlightLine < 0) return;
     const router = this.game.traffic.router;
     for (const line of tr.lines) {
+      if (!this.showRoutes && line.id !== this.highlightLine) continue;
       const pts: { x: number; z: number }[] = [];
-      if (line.kind === 'metro' && line.poly) {
+      if (line.kind !== 'bus' && line.poly) {
         for (let d = 0; d <= line.poly.length; d += 0.15) { const p = line.poly.at(d, 0); pts.push({ x: p.x, z: p.z }); }
-        this.overlay.setRoute('line:' + line.id, pts, TRACK_Y + 0.05, line.color, 0.07, { dash: 1, alpha: 0.95 });
+        const y = line.kind === 'metro' ? TRACK_Y + 0.05 : line.kind === 'tram' ? 0.07 : line.kind === 'ferry' ? WATER_LEVEL + 0.05 : 1.15;
+        this.overlay.setRoute('line:' + line.id, pts, y, line.color, line.kind === 'metro' ? 0.07 : 0.085, { dash: 1, alpha: 0.95 });
       } else {
         for (let k = 0; k + 1 < line.stops.length; k++) {
           const path = router.find(line.stops[k].tile, line.stops[k + 1].tile);
@@ -220,6 +252,25 @@ export class View {
           for (const t of path) pts.push({ x: wx(tileX(t)), z: wz(tileY(t)) });
         }
         this.overlay.setRoute('line:' + line.id, pts, 0.06 + line.id * 0.001, line.color, 0.1, { dash: 1, alpha: 0.9 });
+      }
+    }
+  }
+
+  /** foam trails behind moving ferries */
+  private wakes(dt: number) {
+    if (this.game.speed === 0) return;
+    this.wakeT -= dt;
+    if (this.wakeT > 0) return;
+    this.wakeT = 0.11;
+    const pos = { x: 0, z: 0, ang: 0 };
+    for (const line of this.game.transit.lines) {
+      if (line.kind !== 'ferry' || !line.poly) continue;
+      for (const c of line.vehicles) {
+        if (c.speed < 0.15) continue;
+        line.poly.at(c.d - c.dir * 0.3, c.off, pos);
+        const back = c.dir > 0 ? -1 : 1;
+        void back;
+        this.fx.puff(pos.x, WATER_LEVEL + 0.03, pos.z, { vx: -Math.cos(pos.ang) * c.dir * 0.04, vz: -Math.sin(pos.ang) * c.dir * 0.04, vy: 0, max: 1.8, s0: 0.1, s1: 0.34, c: [0.92, 0.96, 1], a: 0.34 });
       }
     }
   }

@@ -1,6 +1,7 @@
 // Shared data shapes for the simulation (no behaviour here).
 import type { World } from './world.ts';
 import type { Poly } from './path.ts';
+import type { Mode } from './modes.ts';
 
 export type Kind = 'res' | 'com' | 'ind';
 
@@ -71,7 +72,7 @@ export interface Person {
 export interface Stop {
   id: number;
   tile: number;
-  kind: 'bus' | 'metro';
+  kind: Mode;
   name: string;
   x: number; z: number;
   lines: Line[];
@@ -103,13 +104,14 @@ export interface Carrier {
 
 export interface Line {
   id: number;
-  kind: 'bus' | 'metro';
+  kind: Mode;
   name: string;
   color: number;
   stops: Stop[];
   vehicles: Carrier[];
-  // metro
+  // rail-like modes
   tiles: number[];            // the full track tile path
+  stopIdx: number[];          // index into tiles where each stop sits
   poly: Poly | null;
   stopDist: number[];
   // stats

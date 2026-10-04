@@ -4,7 +4,7 @@ import { h, icon, clear, money, fmt, clock } from './dom.ts';
 import { COST, GOALS, UNLOCK } from '../sim/game.ts';
 import { DAY, hourOf, dayOf } from '../sim/types.ts';
 import { wx, wz, DS, DN } from '../sim/world.ts';
-import { WALK_R_BUS } from '../sim/transit.ts';
+import { MODES, MODE_ORDER, type Mode } from '../sim/modes.ts';
 import type { App } from './app.ts';
 import type { ToolId } from './tools.ts';
 import type { OverlayMode } from '../render/view.ts';
@@ -13,11 +13,10 @@ const TOOLS: { id: ToolId; icon: string; label: string; sub: string; key: string
   { id: 'inspect', icon: 'inspect', label: 'Inspect', sub: 'Click anything to see how it is doing', key: '1' },
   { id: 'road', icon: 'road', label: 'Road', sub: `Drag to build · ${money(COST.street)} a tile`, key: '2' },
   { id: 'avenue', icon: 'avenue', label: 'Avenue', sub: `Twice the lanes · ${money(COST.avenue)} a tile`, key: '3' },
-  { id: 'bus', icon: 'bus', label: 'Bus line', sub: 'Click roads to place stops', key: '4' },
-  { id: 'metro', icon: 'metro', label: 'Metro line', sub: 'Elevated trains that skip traffic', key: '5' },
-  { id: 'park', icon: 'park', label: 'Park', sub: `Calms the neighbourhood · ${money(COST.park)}`, key: '6' },
-  { id: 'arena', icon: 'arena', label: 'Arena', sub: `Match days pack the roads · ${money(COST.arena)}`, key: '7' },
-  { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '8' },
+  { id: 'transit', icon: 'bus', label: 'Transit line', sub: 'Bus, tram, metro, ferry, gondola', key: '4' },
+  { id: 'park', icon: 'park', label: 'Park', sub: `Calms the neighbourhood · ${money(COST.park)}`, key: '5' },
+  { id: 'arena', icon: 'arena', label: 'Arena', sub: `Match days pack the roads · ${money(COST.arena)}`, key: '6' },
+  { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '7' },
 ];
 
 export class Hud {
@@ -38,6 +37,8 @@ export class Hud {
   private tmpV = new THREE.Vector3();
   private lastStab = 100;
   private moneyShown = 0;
+  private advisor!: HTMLElement;
+  private advKey = '';
 
   constructor(readonly app: App, root: HTMLElement) {
     this.root = root;
@@ -84,11 +85,11 @@ export class Hud {
         h('span', { class: 'tip' }, t.label, h('small', {}, t.sub)));
       this.toolBtns.set(t.id, b);
       tb.append(b);
-      if (t.id === 'inspect' || t.id === 'metro') tb.append(h('div', { class: 'sep' }));
+      if (t.id === 'inspect' || t.id === 'transit') tb.append(h('div', { class: 'sep' }));
     }
     tb.append(h('div', { class: 'sep' }));
     const mk = (ic: string, label: string, sub: string, fn: () => void, key: string) => h('button', { class: 'tool', onClick: fn }, icon(ic), h('span', { class: 'key' }, key), h('span', { class: 'tip' }, label, h('small', {}, sub)));
-    e.linesBtn = mk('lines', 'Lines', 'Your bus and metro lines', () => this.app.panels.toggle('lines'), 'L');
+    e.linesBtn = mk('lines', 'Lines', 'Every line you run', () => this.app.panels.toggle('lines'), 'L');
     e.polBtn = mk('policy', 'Policies', 'City-wide rules', () => this.app.panels.toggle('policies'), 'P');
     tb.append(e.linesBtn, e.polBtn);
     r.append(tb);
@@ -117,6 +118,8 @@ export class Hud {
     }
     r.append(sd);
 
+    this.advisor = h('div', { class: 'advisor glass', style: { display: 'none' } });
+    r.append(this.advisor);
     this.toasts = h('div', { class: 'toasts' });
     r.append(this.toasts);
     this.labels = h('div', { class: 'labels' });
@@ -150,7 +153,16 @@ export class Hud {
     const g = this.app.game;
     for (const [id, b] of this.toolBtns) {
       b.classList.toggle('on', this.app.tools.tool === id);
-      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'metro' && !g.unlocked.metro) || (id === 'arena' && !g.unlocked.arena));
+      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'arena' && !g.unlocked.arena));
+    }
+    // the transit button wears the icon of the mode in hand
+    const tb = this.toolBtns.get('transit');
+    const mode = this.app.tools.mode;
+    if (tb && (tb as any)._mode !== mode) {
+      (tb as any)._mode = mode;
+      tb.replaceChild(icon(MODES[mode].icon), tb.querySelector('svg')!);
+      const tip = tb.querySelector('.tip');
+      if (tip) { clear(tip); tip.append(`${MODES[mode].label} line`, h('small', {}, MODES[mode].tag)); }
     }
     this.el.polBtn.classList.toggle('lock', !g.unlocked.policies);
   }
@@ -193,38 +205,67 @@ export class Hud {
   // ------------------------------------------------------------ context card
 
   private ctxSig = '';
+
+  private modeChips(): HTMLElement {
+    const t = this.app.tools;
+    const row = h('div', { class: 'mode-row' });
+    for (const m of MODE_ORDER) {
+      const def = MODES[m];
+      const open = t.modeUnlocked(m);
+      const chip = h('button', { class: 'mchip' + (t.mode === m ? ' on' : '') + (open ? '' : ' lock'), title: open ? def.tag : `Unlocks at ${def.unlock} residents`, onClick: () => t.setMode(m) },
+        icon(open ? def.icon : 'lock'), h('span', {}, def.label), open ? null : h('small', {}, String(def.unlock)));
+      chip.style.setProperty('--mc', '#' + def.color.toString(16).padStart(6, '0'));
+      row.append(chip);
+    }
+    return row;
+  }
+
   refreshContext(force = true) {
     const t = this.app.tools, g = this.app.game;
     let key: string = t.tool;
     const d = t.draft;
-    const sig = `${t.tool}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}`;
+    const sig = `${t.tool}|${t.mode}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
     if (!force && sig === this.ctxSig && this.context) return;
     this.ctxSig = sig;
     let node: HTMLElement | null = null;
+    const hexc = (c: number) => '#' + c.toString(16).padStart(6, '0');
     if (d && d.extend) {
       key += 'ext' + d.extend.id;
+      const m = MODES[d.kind];
       node = h('div', { class: 'context glass' },
-        h('div', { class: 'sw', style: { background: '#' + d.extend.color.toString(16).padStart(6, '0') } }),
-        h('div', { class: 't' }, h('b', {}, `Extend ${d.extend.name}`), h('span', {}, d.kind === 'bus' ? 'Click a road to add the next stop. Each click is built right away.' : 'Click open ground or a road to add the next station.')),
+        h('div', { class: 'sw', style: { background: hexc(d.extend.color) } }),
+        h('div', { class: 't' }, h('b', {}, `Extend ${d.extend.name}`), h('span', {}, `Click to add the next ${m.stopWord}. Each click is built right away.`)),
         h('button', { class: 'btn primary', onClick: () => t.finishDraft() }, 'Done'));
     } else if (d) {
       key += 'draft' + d.tiles.length;
-      const q = d.kind === 'bus' ? g.quoteBus(d.tiles.length ? d.tiles : []) : g.quoteMetro(d.tiles.length >= 2 ? d.tiles : []);
-      const cost = d.tiles.length >= 2 ? q.cost : d.kind === 'bus' ? COST.bus : COST.train;
-      const sub = d.tiles.length < 2 ? (d.tiles.length === 0 ? (d.kind === 'bus' ? 'Click a road to place the first stop.' : 'Click to place the first station.') : 'Place at least one more stop.') : `${d.tiles.length} ${d.kind === 'bus' ? 'stops' : 'stations'} · ${money(cost)} with ${d.kind === 'bus' ? 'a bus' : 'a train'}`;
+      const m = MODES[d.kind];
+      const q = d.tiles.length >= 2 ? g.quoteLine(d.kind, d.tiles) : null;
+      const cost = q ? q.cost : m.baseCost + m.stopCost;
+      const sub = d.tiles.length < 2
+        ? (d.tiles.length === 0 ? `Click to place the first ${m.stopWord}.` : `Place at least one more ${m.stopWord}.`)
+        : `${d.tiles.length} ${m.stopWord}s · ${money(cost)} with 1 ${m.vehicle}`;
+      const canAuto = d.kind === 'bus' || d.kind === 'tram' || d.kind === 'metro';
       node = h('div', { class: 'context glass' },
-        h('div', { class: 'sw', style: { background: d.kind === 'bus' ? '#7cc4ff' : '#ffb02e' } }),
-        h('div', { class: 't' }, h('b', {}, d.kind === 'bus' ? 'New bus line' : 'New metro line'), h('span', { class: d.tiles.length >= 2 && !q.ok ? 'warn' : '' }, d.tiles.length >= 2 && !q.ok ? q.reason ?? sub : sub)),
+        h('div', { class: 'sw', style: { background: hexc(m.color) } }),
+        h('div', { class: 't' }, h('b', {}, `New ${m.label.toLowerCase()} line`), h('span', { class: q && !q.ok ? 'warn' : '' }, q && !q.ok ? q.reason ?? sub : sub)),
+        canAuto ? h('button', { class: 'btn ghost sm' + (t.autoStops ? ' on' : ''), title: 'Add stops along long hops for you', onClick: () => { t.autoStops = !t.autoStops; this.refreshContext(); } }, t.autoStops ? 'Auto-stops on' : 'Auto-stops off') : null,
         h('button', { class: 'btn ghost sm', onClick: () => t.undoDraft() }, 'Undo'),
         h('button', { class: 'btn ghost sm', onClick: () => t.cancelDraft() }, 'Cancel'),
-        h('button', { class: 'btn primary', disabled: d.tiles.length < 2 || !q.ok || cost > g.money, onClick: () => t.finishDraft() }, 'Finish line'));
+        h('button', { class: 'btn primary', disabled: !q || !q.ok || cost > g.money, onClick: () => t.finishDraft() }, 'Finish line'));
+    } else if (t.tool === 'transit') {
+      key += 'pick' + t.mode;
+      const m = MODES[t.mode];
+      node = h('div', { class: 'context glass tcontext' },
+        this.modeChips(),
+        h('div', { class: 'trow' },
+          h('div', { class: 'sw', style: { background: hexc(m.color) } }),
+          h('div', { class: 't' }, h('b', {}, `${m.label} · from ${money(m.baseCost + m.stopCost * 2)}`), h('span', {}, `${m.tag} ${m.how}`)),
+          h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
     } else if (t.tool !== 'inspect') {
       const def = TOOLS.find((x) => x.id === t.tool)!;
       const tips: Record<string, string> = {
         road: 'Drag across the map. Right-click to stop building.',
         avenue: 'Drag over streets to widen them, or over open ground to lay new avenues.',
-        bus: 'Click roads to place stops. A line needs at least two. Right-click undoes.',
-        metro: 'Click open ground or roads to place stations. Track is laid between them.',
         park: 'Click or drag over empty ground. Parks raise land value nearby.',
         arena: 'Click empty ground beside a road. The city holds a match every few days.',
         bulldoze: 'Click or drag over buildings, roads and stops to clear them.',
@@ -242,6 +283,47 @@ export class Hud {
     this.context?.remove();
     this.context = node;
     if (node) this.root.append(node);
+  }
+
+  // ------------------------------------------------------------ advisor
+
+  refreshAdvice() {
+    const g = this.app.game;
+    const a = g.advice[0];
+    const hide = !a || !g.advisorOn || this.app.panels.isOpen || !!this.app.modal || this.app.tools.draft !== null;
+    if (hide) { this.advisor.style.display = 'none'; this.advKey = ''; return; }
+    const key = a.id + '|' + a.title + '|' + a.cta + '|' + a.body;
+    if (key === this.advKey && this.advisor.style.display !== 'none') return;
+    this.advKey = key;
+    clear(this.advisor);
+    this.advisor.className = `advisor glass ${a.tone}`;
+    const show = () => {
+      if (a.focus) this.app.view.rig.focus(a.focus.x, a.focus.z, a.focus.dist);
+      if (a.stopId !== undefined && g.transit.stopById.has(a.stopId)) this.app.tools.setSelection({ type: 'stop', id: a.stopId });
+      if (a.lineId !== undefined && g.transit.lineById.has(a.lineId)) this.app.tools.setSelection({ type: 'line', id: a.lineId });
+      this.app.sound.sfx('tick');
+    };
+    const run = () => {
+      if (!a.act) return;
+      const r = a.act() as any;
+      if (!r.ok) { this.app.toast(r.msg ?? 'That did not work.', 'warn'); this.app.sound.sfx('error'); }
+      else if (r.line) {
+        const l = r.line;
+        this.app.toast(`${l.name} is running. Select it any time to add ${MODES[l.kind as Mode].vehicles}.`, 'good');
+        if (l.poly) { const p = l.poly.at(l.poly.length / 2); this.app.view.rig.focus(p.x, p.z, 26); }
+        this.app.tools.setSelection({ type: 'line', id: l.id });
+      }
+      g.refreshAdvice();
+    };
+    this.advisor.append(
+      h('div', { class: 'ad-head' }, h('span', { class: 'ad-ic' }, icon('bulb')), h('b', {}, a.title),
+        h('button', { class: 'x', title: 'Not now', onClick: () => g.dismissAdvice(a.id) }, icon('close'))),
+      h('p', {}, a.body),
+      h('div', { class: 'ad-actions' },
+        a.cta && a.act ? h('button', { class: 'btn primary sm', onClick: run }, a.cta) : null,
+        a.focus || a.stopId !== undefined || a.lineId !== undefined ? h('button', { class: 'btn ghost sm', onClick: show }, 'Show me') : null),
+      g.advice.length > 1 ? h('div', { class: 'ad-more' }, `${g.advice.length - 1} more`) : '');
+    this.advisor.style.display = '';
   }
 
   // ------------------------------------------------------------ hover tip
@@ -273,7 +355,7 @@ export class Hud {
     this.acc += dt;
     const g = this.app.game;
     this.moveTip();
-    if (this.acc > 0.2) { this.acc = 0; this.refreshNumbers(); }
+    if (this.acc > 0.2) { this.acc = 0; this.refreshNumbers(); this.refreshAdvice(); }
     this.updateLabels();
     void g;
   }
@@ -329,7 +411,7 @@ export class Hud {
   private updateLabels() {
     const app = this.app, g = app.game, v = app.view;
     const rig = v.rig;
-    const showAll = v.mode === 'transit' || app.tools.tool === 'bus' || app.tools.tool === 'metro';
+    const showAll = v.mode === 'transit' || app.tools.tool === 'transit';
     const sel = app.tools.selection;
     const hoverTile = app.tools.hover?.tile ?? -1;
     const seen = new Set<number>();
@@ -338,7 +420,7 @@ export class Hud {
       const busy = s.queue.length >= Math.max(5, s.cap * 0.6);
       const focus = (sel?.type === 'stop' && sel.id === s.id) || hoverTile === s.tile;
       if (!showAll && !over && !busy && !focus) continue;
-      const p = rig.toScreen(this.tmpV.set(s.x, s.kind === 'metro' ? 1.35 : 0.34, s.z));
+      const p = rig.toScreen(this.tmpV.set(s.x, s.kind === 'metro' ? 1.35 : s.kind === 'gondola' ? 0.95 : s.kind === 'ferry' ? 0.4 : 0.34, s.z));
       if (!p.visible || p.x < -40 || p.x > innerWidth + 40 || p.y < -20 || p.y > innerHeight + 20) continue;
       seen.add(s.id);
       let el = this.stopLbl.get(s.id);
@@ -392,6 +474,6 @@ export class Hud {
       el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
     }
     for (const [id, el] of this.distLbl) if (!shown.has(id)) { el.remove(); this.distLbl.delete(id); }
-    void WALK_R_BUS; void UNLOCK; void wx; void wz;
+    void UNLOCK; void wx; void wz;
   }
 }

@@ -1,22 +1,24 @@
 // Tools and input: pointer / keyboard handling, drafting roads and lines, selection and previews.
 import { Game, COST, UNLOCK } from '../sim/game.ts';
 import { N, HALF, tileIdx, tileX, tileY, wx, wz, inMap, DX, DY } from '../sim/world.ts';
-import { WALK_R_BUS, WALK_R_METRO } from '../sim/transit.ts';
+import { MODES, MODE_ORDER, type Mode } from '../sim/modes.ts';
 import type { Line } from '../sim/types.ts';
 import type { View } from '../render/view.ts';
 import type { App } from './app.ts';
 import { TRACK_Y } from '../render/fleet.ts';
 import { money } from './dom.ts';
 
-export type ToolId = 'inspect' | 'road' | 'avenue' | 'bus' | 'metro' | 'park' | 'arena' | 'bulldoze';
-export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'bus', 'metro', 'park', 'arena', 'bulldoze'];
+export type ToolId = 'inspect' | 'road' | 'avenue' | 'transit' | 'park' | 'arena' | 'bulldoze';
+export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'transit', 'park', 'arena', 'bulldoze'];
 
 export type Selection = { type: 'building'; id: number } | { type: 'stop'; id: number } | { type: 'road'; tile: number } | { type: 'line'; id: number } | null;
 
-interface Draft { kind: 'bus' | 'metro'; tiles: number[]; extend: Line | null }
+interface Draft { kind: Mode; tiles: number[]; extend: Line | null }
 
 export class Tools {
   tool: ToolId = 'inspect';
+  mode: Mode = 'bus';
+  autoStops = true;
   hover: { tile: number; x: number; z: number } | null = null;
   draft: Draft | null = null;
   selection: Selection = null;
@@ -54,7 +56,6 @@ export class Tools {
   select(t: ToolId) {
     if (t === 'avenue' && !this.game.unlocked.avenue) { this.app.toast(`Avenues unlock at ${UNLOCK.avenue} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (t === 'arena' && !this.game.unlocked.arena) { this.app.toast(`The arena unlocks at ${UNLOCK.arena.toLocaleString()} residents.`, 'info'); this.app.sound.sfx('error'); return; }
-    if (t === 'metro' && !this.game.unlocked.metro) { this.app.toast(`Metro unlocks at ${UNLOCK.metro} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (this.tool === t && t !== 'inspect') { this.cancelDraft(); this.tool = 'inspect'; this.app.hud.refreshTools(); this.refreshPreview(true); return; }
     this.cancelDraft();
     this.tool = t;
@@ -66,6 +67,25 @@ export class Tools {
     this.refreshPreview(true);
   }
 
+  modeUnlocked(m: Mode) { return m === 'bus' || this.game.unlocked[m]; }
+
+  setMode(m: Mode) {
+    if (!this.modeUnlocked(m)) { this.app.toast(`${MODES[m].label} unlocks at ${MODES[m].unlock} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (this.draft?.extend) return;
+    this.cancelDraft();
+    this.mode = m;
+    this.tool = 'transit';
+    this.app.sound.sfx('click');
+    this.app.hud.refreshTools();
+    this.refreshPreview(true);
+  }
+
+  cycleMode(dir = 1) {
+    const list = MODE_ORDER.filter((m) => this.modeUnlocked(m));
+    const i = list.indexOf(this.mode);
+    this.setMode(list[(i + dir + list.length) % list.length]);
+  }
+
   cancelDraft() {
     this.draft = null;
     this.draftKey = '';
@@ -75,7 +95,8 @@ export class Tools {
   }
 
   startExtend(line: Line) {
-    this.tool = line.kind === 'bus' ? 'bus' : 'metro';
+    this.tool = 'transit';
+    this.mode = line.kind;
     this.draft = { kind: line.kind, tiles: [], extend: line };
     this.selection = null;
     this.app.hud.refreshTools();
@@ -199,7 +220,7 @@ export class Tools {
         this.bulldozed.clear();
         this.paintTile(t);
         break;
-      case 'bus': case 'metro':
+      case 'transit':
         this.addDraftStop(t);
         break;
     }
@@ -253,50 +274,38 @@ export class Tools {
 
   // ------------------------------------------------------------------ drafts (bus / metro)
 
+  private fail(msg: string) { this.app.toast(msg, 'warn'); this.app.sound.sfx('error'); }
+
   private addDraftStop(t: number) {
-    const g = this.game, w = g.world;
-    if (!this.draft) this.draft = { kind: this.tool === 'bus' ? 'bus' : 'metro', tiles: [], extend: null };
+    const g = this.game;
+    if (!this.draft) this.draft = { kind: this.mode, tiles: [], extend: null };
     const d = this.draft;
     const prev = d.extend && !d.tiles.length ? d.extend.stops[d.extend.stops.length - 1].tile : d.tiles[d.tiles.length - 1];
     if (t === prev) return;
     // extension: act immediately, one stop at a time
     if (d.extend) {
-      const line = d.extend;
-      if (d.kind === 'bus') {
-        const q = g.quoteBus([prev, t]);
-        const cost = (w.stop[t] < 0 ? COST.busStop : 0);
-        if (!w.road[t]) { this.app.toast('Stops go on roads.', 'warn'); this.app.sound.sfx('error'); return; }
-        if (cost > g.money) { this.app.toast('Not enough money.', 'warn'); this.app.sound.sfx('error'); return; }
-        if (!g.transit.extendBus(line, t)) { this.app.toast(q.reason ?? 'Those stops are not connected by road.', 'warn'); this.app.sound.sfx('error'); return; }
-        g.spend(cost);
-        this.app.sound.sfx('line');
-      } else {
-        const cost = (w.stop[t] < 0 ? COST.station : 0);
-        if (w.bld[t] >= 0 || w.water[t]) { this.app.toast('Stations need open ground or a road.', 'warn'); this.app.sound.sfx('error'); return; }
-        if (cost + 600 > g.money) { this.app.toast('Not enough money.', 'warn'); this.app.sound.sfx('error'); return; }
-        const r = g.transit.extendMetro(line, t);
-        if (!r.ok) { this.app.toast(r.reason ?? 'No room for track.', 'warn'); this.app.sound.sfx('error'); return; }
-        g.spend(cost + 600);
-        this.app.sound.sfx('line');
-      }
+      const r = g.extendLine(d.extend, t);
+      if (!r.ok) { this.fail(r.msg ?? 'Cannot extend there.'); return; }
+      this.app.sound.sfx('line');
       this.app.hud.refreshContext();
       this.app.panels.sync();
       return;
     }
-    if (d.kind === 'bus') {
-      if (!w.road[t]) { this.app.toast('Stops go on roads. Build a road first.', 'warn'); this.app.sound.sfx('error'); return; }
-      if (w.stopKind[t] === 2) { this.app.toast('That tile is a metro station.', 'warn'); this.app.sound.sfx('error'); return; }
-      if (d.tiles.includes(t)) return;
-      if (d.tiles.length) {
-        const last = d.tiles[d.tiles.length - 1];
-        if (!g.traffic.router.find(last, t)) { this.app.toast('Those stops are not connected by road.', 'warn'); this.app.sound.sfx('error'); return; }
+    const why = g.spotCheck(d.kind, t);
+    if (why) { this.fail(why); return; }
+    if (d.tiles.includes(t)) return;
+    if (d.tiles.length) {
+      let extra: number[] = [];
+      if (this.autoStops) extra = g.autoStops(d.kind, prev, t).filter((x) => x !== prev && x !== t && !d.tiles.includes(x));
+      const next = [...d.tiles, ...extra, t];
+      const q = g.quoteLine(d.kind, next);
+      if (!q.ok) {
+        // fall back to just the clicked stop so the player sees the real reason
+        const q2 = g.quoteLine(d.kind, [...d.tiles, t]);
+        if (!q2.ok) { this.fail(q2.reason ?? 'Cannot route there.'); return; }
+        extra = [];
       }
-    } else {
-      const q = g.quoteMetro([...d.tiles, t]);
-      if (d.tiles.length === 0) {
-        if (w.water[t] || w.bld[t] >= 0 || !w.isUnlocked(t) || w.stopKind[t] === 1) { this.app.toast('Stations need open ground or a road.', 'warn'); this.app.sound.sfx('error'); return; }
-      } else if (!q.ok) { this.app.toast(q.reason ?? 'Cannot route track there.', 'warn'); this.app.sound.sfx('error'); return; }
-      if (d.tiles.includes(t)) return;
+      d.tiles.push(...extra);
     }
     d.tiles.push(t);
     this.app.sound.sfx('tick');
@@ -309,10 +318,10 @@ export class Tools {
     if (!d) return;
     if (d.extend) { this.cancelDraft(); this.tool = 'inspect'; this.app.hud.refreshTools(); return; }
     if (d.tiles.length < 2) return;
-    const r = d.kind === 'bus' ? this.game.createBusLine(d.tiles) : this.game.createMetroLine(d.tiles);
-    if (!r.ok) { this.app.toast(r.msg ?? 'Could not build the line.', 'warn'); this.app.sound.sfx('error'); return; }
+    const r = this.game.createLine(d.kind, d.tiles);
+    if (!r.ok) { this.fail(r.msg ?? 'Could not build the line.'); return; }
     const line = r.line!;
-    this.app.toast(`${line.name} is running with 1 ${d.kind === 'bus' ? 'bus' : 'train'}. Add more from the line card.`, 'good');
+    this.app.toast(`${line.name} is running with 1 ${MODES[d.kind].vehicle}. Add more from the line card.`, 'good');
     this.cancelDraft();
     this.tool = 'inspect';
     this.selection = { type: 'line', id: line.id };
@@ -353,11 +362,12 @@ export class Tools {
       case 'Digit1': this.select('inspect'); break;
       case 'Digit2': this.select('road'); break;
       case 'Digit3': this.select('avenue'); break;
-      case 'Digit4': this.select('bus'); break;
-      case 'Digit5': this.select('metro'); break;
-      case 'Digit6': this.select('park'); break;
-      case 'Digit7': this.select('arena'); break;
-      case 'Digit8': this.select('bulldoze'); break;
+      case 'Digit4': if (this.tool === 'transit' && !this.draft) this.cycleMode(1); else this.select('transit'); break;
+      case 'Digit5': this.select('park'); break;
+      case 'Digit6': this.select('arena'); break;
+      case 'Digit7': this.select('bulldoze'); break;
+      case 'BracketRight': if (this.tool === 'transit') this.cycleMode(1); break;
+      case 'BracketLeft': if (this.tool === 'transit') this.cycleMode(-1); break;
       case 'Space': e.preventDefault(); this.app.togglePause(); break;
       case 'Equal': case 'NumpadAdd': this.app.setSpeed(g.speed >= 4 ? 4 : g.speed === 0 ? 1 : g.speed * 2); break;
       case 'Minus': case 'NumpadSubtract': this.app.setSpeed(g.speed <= 1 ? 1 : g.speed / 2); break;
@@ -464,44 +474,44 @@ export class Tools {
         }
         break;
       }
-      case 'bus': case 'metro': {
-        const kind = this.tool === 'bus' ? 'bus' : 'metro';
-        const rad = kind === 'bus' ? WALK_R_BUS : WALK_R_METRO;
+      case 'transit': {
+        const mode = this.mode, m = MODES[mode];
+        const rad = m.walkR;
         const d = this.draft;
-        const color = d?.extend ? d.extend.color : kind === 'bus' ? 0x7cc4ff : 0xffb02e;
+        const color = d?.extend ? d.extend.color : m.color;
         const base: number[] = d?.extend && !d.tiles.length ? d.extend.stops.map((s) => s.tile) : d?.tiles ?? [];
+        if (mode === 'ferry') for (let i = 0; i < N * N; i++) if (w.shore[i] && !g.spotCheck('ferry', i) && !base.includes(i)) cursors.push({ tile: i, style: 'info' });
         for (const t of base) { cursors.push({ tile: t, style: 'gold' }); rings.push({ x: wx(tileX(t)), z: wz(tileY(t)), r: rad, color, alpha: 0.5, fill: 1, pulse: 0 }); }
         if (hv >= 0) {
-          let ok = false, reason = '';
           const prevTile = base.length ? base[base.length - 1] : -1;
-          if (kind === 'bus') {
-            ok = !!w.road[hv] && w.stopKind[hv] !== 2 && !(d?.tiles.includes(hv));
-            if (!w.road[hv]) reason = 'Stops go on roads';
-            else if (prevTile >= 0 && ok && !g.traffic.router.find(prevTile, hv)) { ok = false; reason = 'Not connected by road'; }
-          } else {
-            const tilesQ = d?.extend && !d.tiles.length ? [prevTile, hv] : [...(d?.tiles ?? []), hv];
-            if (tilesQ.length >= 2) {
-              const q = g.quoteMetro(tilesQ);
-              ok = q.ok; reason = q.reason ?? '';
-              const cost = q.cost;
-              this.quote = { text: money(cost - COST.train), ok: ok && g.money >= cost, reason: ok ? (g.money >= cost ? undefined : 'Not enough money') : reason, cost };
-              if (q.track.length) this.drawTrack(q.track, ok ? color : 0xff5a5a);
+          let ok = false, reason = '';
+          let track: number[] = [];
+          const why = g.spotCheck(mode, hv);
+          if (why) reason = why;
+          else if (d?.tiles.includes(hv) || (d?.extend && d.extend.stops.some((s) => s.tile === hv))) reason = 'Already on this line';
+          else {
+            ok = true;
+            if (d?.extend) {
+              const q = g.quoteExtend(d.extend, hv);
+              ok = q.ok; reason = q.reason ?? ''; track = q.track;
+              this.quote = { text: money(q.cost), ok: ok && g.money >= q.cost, reason: ok ? (g.money >= q.cost ? undefined : 'Not enough money') : reason, cost: q.cost };
+            } else if (prevTile >= 0) {
+              const tilesQ = [...(d?.tiles ?? []), hv];
+              const q = g.quoteLine(mode, tilesQ);
+              ok = q.ok; reason = q.reason ?? ''; track = q.track;
+              this.quote = { text: money(q.cost), ok: ok && g.money >= q.cost, reason: ok ? (g.money >= q.cost ? undefined : 'Not enough money') : reason, cost: q.cost };
             } else {
-              ok = !w.water[hv] && w.bld[hv] < 0 && w.isUnlocked(hv) && w.stopKind[hv] !== 1;
-              reason = ok ? '' : 'Needs open ground or a road';
-              this.quote = { text: money(w.stop[hv] >= 0 ? 0 : COST.station), ok, reason };
+              this.quote = { text: money(g.world.stop[hv] >= 0 ? 0 : m.stopCost), ok: true };
             }
           }
+          if (!ok && !this.quote) this.quote = { text: '', ok: false, reason };
+          else if (!ok && this.quote) this.quote.ok = false;
           cursors.push({ tile: hv, style: ok ? 'ok' : 'bad' });
-          if (ok) rings.push({ x: wx(tileX(hv)), z: wz(tileY(hv)), r: rad, color: ok ? 0x4ade80 : 0xff5a5a, alpha: 0.55, fill: 1, pulse: 0 });
-          if (kind === 'bus') {
-            const newStop = w.stop[hv] < 0;
-            this.quote = { text: money(newStop ? COST.busStop : 0), ok, reason: ok ? undefined : reason };
-            if (!ok && reason) this.quote.ok = false;
-          }
-          // route preview
-          this.drawDraft(kind, base, hv, ok, color);
-        } else this.drawDraft(kind, base, -1, false, color);
+          if (ok) rings.push({ x: wx(tileX(hv)), z: wz(tileY(hv)), r: rad, color: 0x4ade80, alpha: 0.55, fill: 1, pulse: 0 });
+          if (track.length && mode !== 'bus') this.drawTrack(mode, track, ok ? color : 0xff5a5a);
+          else this.view.overlay.removeRoute('draftHover');
+          this.drawDraft(mode, base, hv, ok, color);
+        } else this.drawDraft(mode, base, -1, false, color);
         break;
       }
     }
@@ -509,7 +519,7 @@ export class Tools {
     const sel = this.selection;
     if (sel) {
       if (sel.type === 'building') { const b = g.city.buildings.get(sel.id); if (b) cursors.push({ tile: b.tile, style: 'gold' }); }
-      else if (sel.type === 'stop') { const s = g.transit.stopById.get(sel.id); if (s) { cursors.push({ tile: s.tile, style: 'gold' }); rings.push({ x: s.x, z: s.z, r: s.kind === 'bus' ? WALK_R_BUS : WALK_R_METRO, color: 0xffc54d, alpha: 0.55, fill: 1, pulse: 0 }); } }
+      else if (sel.type === 'stop') { const s = g.transit.stopById.get(sel.id); if (s) { cursors.push({ tile: s.tile, style: 'gold' }); rings.push({ x: s.x, z: s.z, r: MODES[s.kind].walkR, color: 0xffc54d, alpha: 0.55, fill: 1, pulse: 0 }); } }
       else if (sel.type === 'road') cursors.push({ tile: sel.tile, style: 'gold' });
     }
     v.cursors = cursors;
@@ -517,24 +527,25 @@ export class Tools {
     this.app.hud.updateHoverTip();
   }
 
-  private drawTrack(tiles: number[], color: number) {
+  private routeY(mode: Mode) { return mode === 'metro' ? TRACK_Y + 0.07 : mode === 'tram' ? 0.075 : mode === 'ferry' ? -0.06 : mode === 'gondola' ? 0.9 : 0.07; }
+
+  private drawTrack(mode: Mode, tiles: number[], color: number) {
     const pts: { x: number; z: number }[] = [];
     for (const t of tiles) pts.push({ x: wx(tileX(t)), z: wz(tileY(t)) });
-    this.view.overlay.setRoute('draftHover', pts, TRACK_Y + 0.07, color, 0.09, { dash: 1, alpha: 0.95 });
+    this.view.overlay.setRoute('draftHover', pts, this.routeY(mode), color, 0.09, { dash: 1, alpha: 0.95 });
   }
 
-  private drawDraft(kind: 'bus' | 'metro', base: number[], hv: number, ok: boolean, color: number) {
-    const key = `${kind}|${base.join(',')}|${hv}|${ok}`;
+  private drawDraft(mode: Mode, base: number[], hv: number, ok: boolean, color: number) {
+    const key = `${mode}|${base.join(',')}|${hv}|${ok}`;
     if (key === this.draftKey) return;
     this.draftKey = key;
     const ov = this.view.overlay, g = this.game;
     ov.removeRoute('draft');
-    if (kind === 'metro') {
-      ov.removeRoute('draft');
+    if (mode !== 'bus') {
       if (hv < 0 || !ok) ov.removeRoute('draftHover');
       if (base.length >= 2) {
-        const q = g.transit.planMetro(base, g.transit.nextLineId);
-        if (q.ok) ov.setRoute('draft', q.tiles.map((t) => ({ x: wx(tileX(t)), z: wz(tileY(t)) })), TRACK_Y + 0.07, color, 0.1, { dash: 1, alpha: 0.95 });
+        const q = g.transit.planTrack(mode, base, g.transit.nextLineId);
+        if (q.ok) ov.setRoute('draft', q.tiles.map((t) => ({ x: wx(tileX(t)), z: wz(tileY(t)) })), this.routeY(mode), color, 0.1, { dash: 1, alpha: 0.95 });
       }
       return;
     }

@@ -1,6 +1,7 @@
 // Right-hand panels: inspect (building / stop / road / line), lines list, policies.
 import { h, icon, clear, money, fmt } from './dom.ts';
 import { COST, UNLOCK } from '../sim/game.ts';
+import { MODES } from '../sim/modes.ts';
 import { DAY } from '../sim/types.ts';
 import type { Line, Stop, Building } from '../sim/types.ts';
 import type { Policies } from '../sim/city.ts';
@@ -15,6 +16,7 @@ interface Built { el: HTMLElement; update: () => void }
 
 export class Panels {
   open: 'lines' | 'policies' | null = null;
+  get isOpen() { return !!this.cur; }
   private host: HTMLElement;
   private cur: Built | null = null;
   private curKey = '';
@@ -149,14 +151,15 @@ export class Panels {
       clear(chips);
       for (const l of s.lines) chips.append(h('button', { class: 'chip', onClick: () => this.app.tools.setSelection({ type: 'line', id: l.id }) }, h('i', { style: { background: hex(l.color) } }), l.name));
       if (!s.lines.length) chips.append(h('span', { class: 'empty' }, 'No lines call here yet.'));
-      const full = s.cap >= (s.kind === 'bus' ? 48 : 150);
-      expBtn.textContent = full ? 'Fully expanded' : `Expand to ${Math.round(s.cap * 1.5)} · ${money(s.kind === 'bus' ? COST.expandBus : COST.expandStation)}`;
+      const full = s.cap >= MODES[s.kind].stopMax;
+      expBtn.textContent = full ? 'Fully expanded' : `Expand to ${Math.min(MODES[s.kind].stopMax, Math.round(s.cap * 1.5))} · ${money(MODES[s.kind].expandCost)}`;
       (expBtn as HTMLButtonElement).disabled = full;
     };
-    const el = this.shell(s0.name, s0.kind === 'bus' ? 'Bus stop' : 'Metro station',
+    const md = MODES[s0.kind];
+    const el = this.shell(s0.name, `${md.label} ${md.stopWord}`,
       h('div', { class: 'kv' }, r1, m.el, r2),
       chips,
-      h('div', { class: 'empty' }, s0.kind === 'bus' ? 'If the crowd outgrows the stop it starts to hurt the whole city. Add buses to the line or expand the stop.' : 'Stations hold more people than stops, but a full platform still counts against stability.'),
+      h('div', { class: 'empty' }, md.solid ? 'Big stops hold more people, but a full platform still counts against stability.' : 'If the crowd outgrows the stop it starts to hurt the whole city. Add vehicles to the line or expand the stop.'),
       h('div', { class: 'actions' }, expBtn,
         h('button', { class: 'btn danger sm', onClick: () => { this.app.game.bulldoze(s0.tile); this.app.tools.setSelection(null); } }, 'Remove')));
     upd();
@@ -213,14 +216,15 @@ export class Panels {
       v4.textContent = isFinite(hw) ? `${Math.round(hw)} s` : '–';
       count.textContent = String(l.vehicles.length);
       const max = tr.maxVehicles(l);
-      cost.textContent = `${l.kind === 'bus' ? 'Buses' : 'Trains'} · ${money(tr.vehicleCost(l))} each · max ${max}`;
+      cost.textContent = `${MODES[l.kind].vehicles[0].toUpperCase()}${MODES[l.kind].vehicles.slice(1)} · ${money(tr.vehicleCost(l))} each · max ${max}`;
       clear(stops);
       for (const s of l.stops) stops.append(h('button', { class: 'chip', onClick: () => this.app.tools.setSelection({ type: 'stop', id: s.id }) }, h('i', { style: { background: s.queue.length > s.cap ? 'var(--red)' : hex(l.color) } }), s.name));
       warn.textContent = l.broken ? 'A stop on this line cannot be reached by road. Reconnect it or remove the line.' : '';
       warn.style.display = l.broken ? '' : 'none';
     };
-    const el = this.shell(l0.name, `${l0.kind === 'bus' ? 'Bus' : 'Metro'} line · ${l0.stops.length} ${l0.kind === 'bus' ? 'stops' : 'stations'}`,
-      h('div', { class: 'row' }, h('span', { class: 'chip', style: { background: hex(l0.color), color: '#10151c' } }, l0.kind === 'bus' ? 'Bus' : 'Metro'), h('div', { class: 'stepper' }, minus, count, plus)),
+    const lm = MODES[l0.kind];
+    const el = this.shell(l0.name, `${lm.label} line · ${l0.stops.length} ${lm.stopWord}s`,
+      h('div', { class: 'row' }, h('span', { class: 'chip', style: { background: hex(l0.color), color: '#10151c' } }, lm.label), h('div', { class: 'stepper' }, minus, count, plus)),
       cost,
       warn,
       h('div', { class: 'kv' }, r1, r2, r3, r4),
@@ -240,13 +244,13 @@ export class Panels {
     const list = h('div', { class: 'kv' });
     const upd = () => {
       clear(list);
-      if (!tr.lines.length) { list.append(h('div', { class: 'empty' }, 'No lines yet. Pick the Bus line tool (4), click a few roads to place stops, then press Finish.')); return; }
+      if (!tr.lines.length) { list.append(h('div', { class: 'empty' }, 'No lines yet. Pick the Transit tool (4), choose a mode, click a few spots to place stops, then press Finish.')); return; }
       for (const l of tr.lines) {
         const board = l.vehicles.reduce((a, c) => a + c.passengers.length, 0);
         const wait = l.stops.reduce((a, s) => a + s.queue.length, 0);
         list.append(h('button', { class: 'lineitem', onClick: () => { this.open = null; this.app.tools.setSelection({ type: 'line', id: l.id }); } },
           h('div', { class: 'sw', style: { background: hex(l.color) } }),
-          h('div', {}, h('div', { class: 'n' }, l.name), h('div', { class: 'm' }, `${l.stops.length} stops · ${l.vehicles.length} ${l.kind === 'bus' ? 'bus' : 'train'}${l.vehicles.length === 1 ? '' : l.kind === 'bus' ? 'es' : 's'} · ${wait} waiting`)),
+          h('div', {}, h('div', { class: 'n' }, l.name), h('div', { class: 'm' }, `${MODES[l.kind].label} · ${l.stops.length} stops · ${l.vehicles.length} ${l.vehicles.length === 1 ? MODES[l.kind].vehicle : MODES[l.kind].vehicles} · ${wait} waiting`)),
           h('div', { class: 'r num' }, `${board}`, h('div', { class: 'm' }, 'on board'))));
       }
     };

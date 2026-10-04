@@ -56,3 +56,32 @@ export function growDemo(g: Game, days = 6, withMetro = true) {
   }
   g.stability = 100;
 }
+
+/** build one tram, ferry and gondola line on good spots (screenshots / tests) */
+export function addModes(g: Game) {
+  const w = g.world;
+  g.money = Math.max(g.money, 300000);
+  for (const k of ['tram', 'ferry', 'gondola', 'metro'] as const) g.unlocked[k] = true;
+  let a = 12345;
+  const rnd = () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const roads: number[] = [], shore: number[] = [], open: number[] = [];
+  for (let i = 0; i < N * N; i++) {
+    if (w.road[i] && w.stop[i] < 0) roads.push(i);
+    if (w.shore[i] && w.isEmpty(i) && w.isUnlocked(i)) shore.push(i);
+    if (!w.road[i] && !w.water[i] && w.bld[i] < 0 && !w.park[i] && w.stop[i] < 0 && w.isUnlocked(i)) open.push(i);
+  }
+  const blds = [...g.city.buildings.values()];
+  const dist = (p: number, q: number) => Math.hypot((p % N) - (q % N), Math.floor(p / N) - Math.floor(q / N));
+  const near = (t: number, r: number) => blds.reduce((n, b) => n + (Math.hypot(b.x - (t % N), b.y - Math.floor(t / N)) < r ? b.cap : 0), 0);
+  const best = (arr: number[], lo: number, hi: number) => {
+    const out: { p: number[]; sc: number }[] = [];
+    for (let k = 0; k < 700; k++) { const p = arr[(rnd() * arr.length) | 0], q = arr[(rnd() * arr.length) | 0]; const d = dist(p, q); if (d >= lo && d <= hi) out.push({ p: [p, q], sc: near(p, 4) * near(q, 4) }); }
+    return out.sort((x, y) => y.sc - x.sc).slice(0, 14).map((o) => o.p);
+  };
+  const out: Record<string, number | null> = {};
+  for (const [mode, arr, lo, hi] of [['tram', roads, 9, 20], ['ferry', shore, 6, 24], ['gondola', open, 7, 16]] as const) {
+    out[mode] = null;
+    for (const c of best(arr, lo, hi)) { const r = g.createLine(mode, c); if (r.ok) { out[mode] = r.line!.id; for (let k = 0; k < 2; k++) g.addVehicle(r.line!); break; } }
+  }
+  return out;
+}

@@ -262,3 +262,40 @@ svg { display: block; }
 .tool.pulse::after { content: ''; position: absolute; inset: -3px; border-radius: 15px; border: 2px solid var(--amber); animation: ring 1.4s ease-out infinite; pointer-events: none; }
 @keyframes ring { 0% { opacity: 0.9; transform: scale(0.96); } 100% { opacity: 0; transform: scale(1.22); } }
 .city .rush { color: var(--amber); font-weight: 700; }
+
+/* ---- transit mode picker ---- */
+.context.tcontext { flex-direction: column; align-items: stretch; gap: 10px; padding-top: 10px; max-width: min(720px, calc(100vw - 460px)); }
+.context .trow { display: flex; gap: 16px; align-items: center; }
+.mode-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.mchip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px 7px 9px; border-radius: 11px; font-size: 13px; font-weight: 600; color: var(--text-2); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--hair); transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.2s var(--spring); }
+.mchip svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mchip small { font-size: 11px; opacity: 0.6; font-weight: 600; }
+.mchip:hover { background: var(--glass-2); color: var(--text); }
+.mchip:active { transform: scale(0.95); }
+.mchip.on { color: var(--text); border-color: var(--mc, var(--amber)); background: color-mix(in srgb, var(--mc, var(--amber)) 16%, transparent); }
+.mchip.on svg { stroke: var(--mc, var(--amber)); }
+.mchip.lock { opacity: 0.45; }
+.btn.on { color: var(--amber); border-color: rgba(255, 176, 46, 0.5); }
+@media (max-width: 760px) { .context.tcontext { max-width: none; } .mchip span { display: none; } .mchip.on span { display: inline; } }
+
+/* ---- advisor ---- */
+.advisor { position: absolute; right: 16px; top: 150px; width: 304px; padding: 12px 14px 12px; display: grid; gap: 8px; animation: rise 0.3s var(--ease); border-left: 3px solid var(--blue); }
+.advisor.warn { border-left-color: var(--amber); }
+.advisor.urgent { border-left-color: var(--red); }
+.advisor .ad-head { display: flex; align-items: center; gap: 9px; }
+.advisor .ad-head b { flex: 1; font-size: 14px; font-weight: 700; line-height: 1.2; }
+.advisor .ad-ic svg { width: 18px; height: 18px; stroke: var(--blue); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.advisor.warn .ad-ic svg { stroke: var(--amber); }
+.advisor.urgent .ad-ic svg { stroke: var(--red); }
+.advisor .x { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; color: var(--text-3); }
+.advisor .x:hover { background: var(--glass-2); color: var(--text); }
+.advisor .x svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.advisor p { margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.4; }
+.advisor .ad-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.advisor .ad-more { font-size: 11.5px; color: var(--text-3); font-weight: 600; }
+@media (max-width: 760px) { .advisor { top: auto; bottom: 120px; right: 8px; left: 8px; width: auto; } }
+
+/* ---- title: the five ways to move people ---- */
+.title-modes { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 6px; }
+.title-modes span { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px 6px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--text-2); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--hair); }
+.title-modes svg { width: 17px; height: 17px; stroke: var(--mc, var(--amber)); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

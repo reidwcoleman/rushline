@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { MeshBuilder, patch, lin, instAttr, tmpObj } from './gfx.ts';
 import { mulberry32 } from '../sim/util.ts';
-import { WATER_LEVEL, type World } from '../sim/world.ts';
+import { WATER_LEVEL, N, tileIdx, tileX, tileY, wx, wz, inMap, type World } from '../sim/world.ts';
 
 function boatGeo() {
   const b = new MeshBuilder();
@@ -25,6 +25,17 @@ function birdGeo() {
   return b.geometry();
 }
 
+function walkerGeo() {
+  const b = new MeshBuilder();
+  b.paintW = 1;
+  b.cyl(0, 0.014, 0, 0.0125, 0.0105, 0.036, lin(0xffffff), 6, { cap: false });
+  b.paintW = 0;
+  b.cyl(0, 0, 0, 0.007, 0.007, 0.016, lin(0x2d3340), 5, { cap: false });   // legs
+  b.blob(0, 0.058, 0, 0.0115, 0.0125, 0.0115, lin(0xf0c8a0), 5, 3);       // head
+  return b.geometry();
+}
+interface Walker { tile: number; axis: number; dir: number; u: number; side: number; speed: number; ph: number }
+
 export class Life {
   group = new THREE.Group();
   private boats: THREE.InstancedMesh;
@@ -35,6 +46,13 @@ export class Life {
   private birdState: { cx: number; cz: number; r: number; a: number; w: number; h: number; ph: number }[] = [];
   private poly: { x: number; z: number; cum: number }[] = [];
   private len = 0;
+  private walkers: Walker[] = [];
+  private walkMesh: THREE.InstancedMesh;
+  private walkTint: THREE.InstancedBufferAttribute;
+  private walkWant = 0;
+  private roadTiles: number[] = [];
+  private roadVer = -1;
+  private wrnd: () => number;
 
   constructor(scene: THREE.Scene, readonly world: World) {
     const rnd = mulberry32(world.seed + 41);
@@ -64,7 +82,18 @@ export class Life {
     this.birds = new THREE.InstancedMesh(bg, bm, 16);
     this.birds.frustumCulled = false;
     for (let i = 0; i < 16; i++) this.birdState.push({ cx: (rnd() - 0.5) * 20, cz: (rnd() - 0.5) * 20, r: 8 + rnd() * 18, a: rnd() * 6.28, w: (0.12 + rnd() * 0.12) * (rnd() < 0.5 ? 1 : -1), h: 5 + rnd() * 5, ph: rnd() * 6 });
-    this.group.add(this.boats, this.birds);
+    this.wrnd = mulberry32(world.seed + 77);
+    const WG = walkerGeo();
+    this.walkTint = instAttr(320, 3, 1);
+    WG.setAttribute('aTint', this.walkTint);
+    this.walkMesh = new THREE.InstancedMesh(WG, patch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { paint: true }), 320);
+    this.walkMesh.count = 0;
+    this.walkMesh.frustumCulled = false;
+    this.walkMesh.castShadow = true;
+    const cols2 = [0xe65f5c, 0x4f8fdb, 0xf2b84b, 0x58b88a, 0x9c6fdb, 0xe87bb1, 0xf08a46, 0x45b5c4, 0x8bc34a, 0xd96a6a, 0x6c7ae0, 0xc9a45a, 0xf2f2ee, 0x3d4350];
+    for (let i = 0; i < 320; i++) { const k = new THREE.Color(cols2[i % cols2.length]); this.walkTint.setXYZ(i, k.r, k.g, k.b); }
+    this.walkTint.needsUpdate = true;
+    this.group.add(this.boats, this.birds, this.walkMesh);
     scene.add(this.group);
   }
 
@@ -110,7 +139,57 @@ export class Life {
       this.birds.setMatrixAt(i, tmpObj.matrix);
     }
     this.birds.instanceMatrix.needsUpdate = true;
+    this.stepWalkers(dt, time);
   }
 
   setNight(n: number) { this.birds.visible = n < 0.5; }
+
+  setWalkers(n: number) { this.walkWant = Math.max(0, Math.round(n)); }
+
+  private spawnWalker(): Walker | null {
+    const w = this.world;
+    if (this.roadVer !== w.version.roads) {
+      this.roadVer = w.version.roads;
+      this.roadTiles = [];
+      for (let i = 0; i < N * N; i++) if (w.road[i] && !w.water[i]) this.roadTiles.push(i);
+    }
+    if (!this.roadTiles.length) return null;
+    for (let k = 0; k < 12; k++) {
+      const t = this.roadTiles[Math.floor(this.wrnd() * this.roadTiles.length)];
+      const x = tileX(t), y = tileY(t);
+      const h = (inMap(x - 1, y) && w.road[tileIdx(x - 1, y)] > 0) || (inMap(x + 1, y) && w.road[tileIdx(x + 1, y)] > 0);
+      const v = (inMap(x, y - 1) && w.road[tileIdx(x, y - 1)] > 0) || (inMap(x, y + 1) && w.road[tileIdx(x, y + 1)] > 0);
+      if (!h && !v) continue;
+      const axis = h && (!v || this.wrnd() < 0.5) ? 0 : 1;
+      return { tile: t, axis, dir: this.wrnd() < 0.5 ? 1 : -1, u: this.wrnd() - 0.5, side: (this.wrnd() < 0.5 ? -1 : 1) * (0.42 + this.wrnd() * 0.04), speed: 0.1 + this.wrnd() * 0.07, ph: this.wrnd() * 6.28 };
+    }
+    return null;
+  }
+
+  private stepWalkers(dt: number, time: number) {
+    const w = this.world;
+    while (this.walkers.length < Math.min(this.walkWant, 320)) { const s = this.spawnWalker(); if (!s) break; this.walkers.push(s); }
+    if (this.walkers.length > this.walkWant) this.walkers.length = this.walkWant;
+    let n = 0;
+    for (const s of this.walkers) {
+      if (!w.road[s.tile]) { const r = this.spawnWalker(); if (r) Object.assign(s, r); continue; }
+      s.u += s.dir * s.speed * dt;
+      if (Math.abs(s.u) > 0.5) {
+        const x = tileX(s.tile) + (s.axis === 0 ? s.dir : 0), y = tileY(s.tile) + (s.axis === 1 ? s.dir : 0);
+        const nt = inMap(x, y) ? tileIdx(x, y) : -1;
+        if (nt >= 0 && w.road[nt] && !w.water[nt]) { s.tile = nt; s.u -= s.dir; }
+        else { s.dir = -s.dir; s.u = s.dir > 0 ? -0.49 : 0.49; }
+      }
+      const cx = wx(tileX(s.tile)), cz = wz(tileY(s.tile));
+      const px = cx + (s.axis === 0 ? s.u : s.side), pz = cz + (s.axis === 0 ? s.side : s.u);
+      const heading = s.axis === 0 ? (s.dir > 0 ? 0 : Math.PI) : (s.dir > 0 ? -Math.PI / 2 : Math.PI / 2);
+      tmpObj.position.set(px, 0.012 + Math.abs(Math.sin(time * 7 + s.ph)) * 0.0025, pz);
+      tmpObj.rotation.set(0, -heading, 0);
+      tmpObj.scale.setScalar(1);
+      tmpObj.updateMatrix();
+      this.walkMesh.setMatrixAt(n++, tmpObj.matrix);
+    }
+    this.walkMesh.count = n;
+    this.walkMesh.instanceMatrix.needsUpdate = true;
+  }
 }

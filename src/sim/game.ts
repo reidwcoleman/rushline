@@ -1,7 +1,9 @@
 // The game: owns the world, traffic, transit and city; handles commands, money, events and the stability meter.
 import { World, N, DX, DY, tileIdx, tileX, tileY, inMap, DN, DS, distIdx } from './world.ts';
 import { Traffic } from './traffic.ts';
-import { Transit, WALK_R_BUS, WALK_R_METRO } from './transit.ts';
+import { Transit } from './transit.ts';
+import { MODES, MODE_ORDER, isSolidCode, type Mode } from './modes.ts';
+import { advise, autoLine, type Advice } from './advisor.ts';
 import { City, defaultPolicies, type Policies } from './city.ts';
 import { mulberry32, clamp, type Rng } from './util.ts';
 import { CITY_NAMES } from './names.ts';
@@ -11,10 +13,10 @@ export const COST = {
   arena: 6000, street: 12, avenue: 38, upgrade: 28, bridge: 60, park: 140, busStop: 80, bus: 200, station: 1000, track: 70, trackWater: 60, train: 900,
   bulldoze: 25, expandBus: 220, expandStation: 600,
 };
-export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4, busStop: 3, bus: 16, station: 55, track: 3, train: 70 };
+export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4 };
 
 export const MAX_LINES = 14;
-export const UNLOCK = { avenue: 200, policies: 350, metro: 600, arena: 1600 };
+export const UNLOCK = { avenue: 200, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600 };
 
 export interface Cmd { ok: boolean; msg?: string; cost?: number }
 
@@ -79,15 +81,23 @@ export class Game {
   private stabT = 0;
   lastDay = 1;
   daysSurvived = 0;
-  unlocked = { avenue: false, policies: false, metro: false, arena: false };
+  unlocked = { avenue: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false };
   match: { tile: number; start: number; end: number; announced: boolean; started: boolean } | null = null;
   nextMatchDay = 0;
 
-  diff = 1;           // 0 relaxed, 1 standard, 2 rush
+  diff = 0;           // 0 relaxed, 1 standard, 2 rush
+  /** assistants: buy vehicles for crowded lines, and surface one-click advice */
+  autoFleet = true;
+  advisorOn = true;
+  advice: Advice[] = [];
+  dismissed = new Set<string>();
+  private adviceT = 0;
+  private fleetT = 0;
+  autopilotLog = 0;
 
   constructor(seed = 1, opts: { start?: boolean; diff?: number } = {}) {
     this.seed = seed;
-    this.diff = opts.diff ?? 1;
+    this.diff = opts.diff ?? 0;
     this.rand = mulberry32(seed * 31 + 7);
     this.name = CITY_NAMES[seed % CITY_NAMES.length];
     this.world = new World(seed);
@@ -104,9 +114,8 @@ export class Game {
       free: () => this.policies.freeTransit,
     };
     this.city.onFee = (a, why) => this.earn(a, why);
-    if (this.diff === 0) this.money = 9000;
-    if (this.diff === 2) this.money = 5200;
-    this.city.growthBoost = [0.75, 1, 1.3][this.diff];
+    this.money = [14000, 9500, 6500][this.diff];
+    this.city.growthBoost = [0.72, 0.92, 1.25][this.diff];
     this.t = DAY * 0.27;     // early morning of day 1
     this.ctx.t = this.t;
     this.nextRain = this.t + DAY * (2.2 + this.rand() * 2);
@@ -271,9 +280,10 @@ export class Game {
       else if (w.road[i] === 2) up += UPKEEP.avenue;
       if (w.park[i]) up += UPKEEP.park;
     }
-    for (const sp of this.transit.stops) up += sp.kind === 'bus' ? UPKEEP.busStop : UPKEEP.station;
+    for (const sp of this.transit.stops) up += MODES[sp.kind].upStop;
     for (const l of this.transit.lines) {
-      up += l.kind === 'bus' ? l.vehicles.length * UPKEEP.bus : l.vehicles.length * UPKEEP.train + l.tiles.length * UPKEEP.track;
+      const m = MODES[l.kind];
+      up += l.vehicles.length * m.upVeh + (l.kind === 'gondola' ? this.transit.lineLength(l) : l.tiles.length) * m.upTrack;
     }
     if (this.policies.toll) up += 20;
     if (this.policies.busLanes) up += 30;
@@ -303,14 +313,22 @@ export class Game {
     if (!u.avenue && p >= UNLOCK.avenue) { u.avenue = true; if (!silent) { this.toast('Avenues unlocked: wider roads that carry twice the cars.', 'good'); this.emit('unlock', 'avenue'); } }
     if (!u.policies && p >= UNLOCK.policies) { u.policies = true; if (!silent) { this.toast('City policies unlocked.', 'good'); this.emit('unlock', 'policies'); } }
     if (!u.arena && p >= UNLOCK.arena) { u.arena = true; if (!silent) { this.toast('Arena unlocked: match days pack the streets and pay well.', 'good'); this.emit('unlock', 'arena'); } }
-    if (!u.metro && p >= UNLOCK.metro) { u.metro = true; if (!silent) { this.toast('Metro unlocked: elevated trains that skip traffic.', 'good'); this.emit('unlock', 'metro'); } }
+    const unlockMsg: Record<string, string> = {
+      tram: 'Trams unlocked: rails in the road median, never stuck in traffic.',
+      ferry: 'Ferries unlocked: put piers on the shore and sail across the water.',
+      gondola: 'Gondolas unlocked: cable cars that fly straight over everything.',
+      metro: 'Metro unlocked: elevated trains that skip traffic.',
+    };
+    for (const k of ['tram', 'ferry', 'gondola', 'metro'] as const) {
+      if (!u[k] && p >= UNLOCK[k]) { u[k] = true; if (!silent) { this.toast(unlockMsg[k], 'good'); this.emit('unlock', k); } }
+    }
   }
 
   // ---------------------------------------------------------------- stability
 
   private stability_(dt: number) {
     const tr = this.traffic, ts = this.transit, st = this.city.stats;
-    const size = 5 + st.pop / 110;
+    const size = (this.diff === 0 ? 8 : 6) + st.pop / (this.diff === 0 ? 85 : 100);
     const jam = clamp(tr.gridlock / size);
     const slow = clamp((tr.trafficIndex - 0.45) / 0.4) * clamp(tr.loadedTiles / 12);
     const rawTraffic = Math.max(jam, slow * 0.9);
@@ -323,9 +341,9 @@ export class Game {
     const traffic = cr.traffic + (rawTraffic - cr.traffic) * a;
     const transit = cr.transit + (rawTransit - cr.transit) * a;
     const unrest = cr.unrest + (rawUnrest - cr.unrest) * a;
-    const total = 1 - (1 - traffic * 0.95) * (1 - transit * 0.9) * (1 - unrest * 0.8) * (1 - debt);
+    const total = (1 - (1 - traffic * 0.95) * (1 - transit * 0.9) * (1 - unrest * 0.8) * (1 - debt)) * [0.78, 0.92, 1][this.diff];
     this.crisis = { traffic, transit, unrest, debt, total };
-    const grace = (this.day < 3 ? 0.25 : this.day < 5 ? 0.6 : 1) * [0.6, 1, 1.35][this.diff];
+    const grace = (this.day < 4 ? 0.12 : this.day < 7 ? 0.4 : 1) * [0.42, 0.8, 1.25][this.diff];
     let d: number;
     if (total > 0.33) d = -(total - 0.33) * 0.8 * grace;
     else d = (0.33 - total) * 1.1;
@@ -348,6 +366,7 @@ export class Game {
 
   private events() {
     const t = this.t, w = this.world;
+    this.assist(t);
     if (t > this.nextRain) {
       this.rainUntil = t + DAY * (0.3 + this.rand() * 0.2);
       this.nextRain = this.rainUntil + DAY * (2.5 + this.rand() * 3);
@@ -357,7 +376,7 @@ export class Game {
     }
     if (this.city.rain && t > this.rainUntil) { this.city.rain = false; this.emit('weather', 'clear'); }
     if (t > this.nextAccident && this.day >= 2) {
-      this.nextAccident = t + DAY * (1.0 + this.rand() * 1.4);
+      this.nextAccident = t + DAY * (1.0 + this.rand() * 1.4) * [1.7, 1.2, 1][this.diff];
       // choose a loaded road tile
       let best = -1, bl = 0.15;
       for (let k = 0; k < 60; k++) {
@@ -401,6 +420,41 @@ export class Game {
     if (this.festival && t > this.festival.until) { this.festival = null; this.city.eventTile = -1; this.emit('festivalEnd'); }
   }
 
+  /** assistants: auto-fleet and the advisor refresh */
+  private assist(t: number) {
+    if (this.autoFleet && t - this.fleetT > 5) {
+      this.fleetT = t;
+      let best: Line | null = null, bs = 0;
+      for (const l of this.transit.lines) {
+        if (l.vehicles.length >= this.transit.maxVehicles(l)) continue;
+        let need = 0;
+        for (const s of l.stops) need = Math.max(need, s.queue.length / s.cap);
+        if (t - l.lastFull < 14) need = Math.max(need, 0.8);
+        const cost = this.transit.vehicleCost(l);
+        if (need > 0.72 && need > bs && this.money > cost + 1200) { bs = need; best = l; }
+      }
+      if (best) {
+        const r = this.addVehicle(best);
+        if (r.ok && t - this.autopilotLog > DAY * 0.25) { this.autopilotLog = t; this.toast(`Auto-fleet added a ${MODES[best.kind].vehicle} to ${best.name}.`, 'info'); }
+      }
+    }
+    if (this.advisorOn && t - this.adviceT > 2) {
+      this.adviceT = t;
+      this.advice = advise(this, this.dismissed);
+      this.emit('advice', this.advice);
+    }
+  }
+
+  autoLine(mode: Mode) { const r = autoLine(this, mode); this.refreshAdvice(); return r; }
+  refreshAdvice() { this.adviceT = this.t; this.advice = this.advisorOn ? advise(this, this.dismissed) : []; this.emit('advice', this.advice); }
+  dismissAdvice(id: string) {
+    this.dismissed.add(id);
+    // an id comes back after a while in case the problem is still there
+    setTimeout(() => this.dismissed.delete(id), 90000);
+    this.advice = this.advice.filter((a) => a.id !== id);
+    this.emit('advice', this.advice);
+  }
+
   // ---------------------------------------------------------------- commands: roads, parks, bulldoze
 
   roadTileCost(i: number, level: number): number {
@@ -417,7 +471,8 @@ export class Game {
     if (!w.isUnlocked(i)) return 'locked';
     if (w.bld[i] >= 0) return 'building';
     if (w.park[i]) return 'park';
-    if (w.stopKind[i] === 2) return 'station';
+    if (isSolidCode(w.stopKind[i])) return 'station';
+    if (w.water[i] && this.transit.boat[i] && w.road[i] === 0) return 'ferry';
     if (w.road[i] >= level) return 'exists';
     return null;
   }
@@ -429,7 +484,7 @@ export class Game {
     for (const i of tiles) {
       const r = this.canRoad(i, level);
       if (r === null) { ok.push(true); cost += this.roadTileCost(i, level); }
-      else { ok.push(r === 'exists'); if (r === 'locked') reason = 'Unlock this district first.'; else if (r === 'building') reason ??= 'A building is in the way.'; else if (r === 'park') reason ??= 'Remove the park first.'; }
+      else { ok.push(r === 'exists'); if (r === 'locked') reason = 'Unlock this district first.'; else if (r === 'building') reason ??= 'A building is in the way.'; else if (r === 'park') reason ??= 'Remove the park first.'; else if (r === 'ferry') reason ??= 'A ferry route runs under here. Boats cannot pass a bridge.'; }
     }
     return { ok, cost, reason };
   }
@@ -501,11 +556,11 @@ export class Game {
     }
     if (w.stop[i] >= 0) {
       const s = this.transit.stopById.get(w.stop[i])!;
-      if (s.kind === 'metro') {
+      if (MODES[s.kind].solid) {
         const n = s.lines.length;
         this.transit.removeStop(s);
         this.emit('sfx', 'demolish');
-        return { ok: true, msg: n ? 'Station and its lines removed.' : 'Station removed.' };
+        return { ok: true, msg: n ? `${MODES[s.kind].stopWord[0].toUpperCase()}${MODES[s.kind].stopWord.slice(1)} and its lines removed.` : 'Removed.' };
       }
       this.transit.removeStop(s);
       this.emit('sfx', 'demolish');
@@ -520,6 +575,7 @@ export class Game {
       return { ok: true };
     }
     if (w.road[i]) {
+      for (const l of [...this.transit.lines]) if (l.kind === 'tram' && l.tiles.includes(i)) { this.transit.deleteLine(l); this.toast(`${l.name} lost its rails with the road.`, 'warn'); }
       w.road[i] = 0;
       w.version.roads++;
       this.traffic.tileRemoved(i);
@@ -554,13 +610,31 @@ export class Game {
 
   // ---------------------------------------------------------------- commands: transit
 
+  /** why a stop of this mode cannot go on tile t, or null when it can */
+  spotCheck(mode: Mode, t: number): string | null {
+    const w = this.world, m = MODES[mode];
+    if (!w.isUnlocked(t)) return 'Unlock that district first.';
+    if (w.stop[t] >= 0) return w.stopKind[t] === m.stopCode ? null : 'That tile already has a different kind of stop.';
+    switch (mode) {
+      case 'bus': case 'tram': return w.road[t] ? null : 'Stops go on roads.';
+      case 'metro': return w.water[t] || w.bld[t] >= 0 ? 'Stations need open ground or a road.' : null;
+      case 'ferry':
+        if (w.water[t]) return 'Piers go on the shore, not in the water.';
+        if (!w.shore[t]) return 'A pier has to touch the water.';
+        return w.isEmpty(t) ? null : 'That spot is taken. Piers need a free shoreline tile.';
+      case 'gondola':
+        if (w.water[t] || w.bld[t] >= 0 || w.road[t] || w.park[t]) return 'Cable stations need open ground.';
+        return null;
+    }
+  }
+
   quoteBus(tiles: number[]): { cost: number; ok: boolean; reason?: string } {
     const w = this.world;
     let cost = COST.bus;
     for (const t of tiles) {
       if (!w.road[t]) return { cost, ok: false, reason: 'Stops go on roads.' };
       if (w.stop[t] < 0) cost += COST.busStop;
-      else if (w.stopKind[t] === 2) return { cost, ok: false, reason: 'That is a metro station.' };
+      else if (w.stopKind[t] !== MODES.bus.stopCode) return { cost, ok: false, reason: 'That tile already has a different kind of stop.' };
     }
     for (let k = 0; k + 1 < tiles.length; k++) {
       if (tiles[k] === tiles[k + 1]) return { cost, ok: false, reason: 'Pick a different stop.' };
@@ -569,51 +643,151 @@ export class Game {
     return { cost, ok: true };
   }
 
-  createBusLine(tiles: number[]): Cmd & { line?: Line } {
-    if (tiles.length < 2) return { ok: false, msg: 'A line needs at least two stops.' };
+  /** what a route of any mode would cost and lay down, for previews and quotes */
+  quoteLine(mode: Mode, tiles: number[]): { cost: number; ok: boolean; reason?: string; track: number[]; widen: number[] } {
+    const w = this.world, m = MODES[mode];
+    if (mode === 'bus') { const q = this.quoteBus(tiles); return { ...q, track: [], widen: [] }; }
+    let cost = m.baseCost;
+    const widen: number[] = [];
+    for (const t of tiles) {
+      const why = this.spotCheck(mode, t);
+      if (why) return { cost, ok: false, reason: why, track: [], widen };
+      if (w.stop[t] < 0) cost += m.stopCost;
+    }
+    const plan = this.transit.planTrack(mode, tiles, this.transit.nextLineId);
+    if (!plan.ok) return { cost, ok: false, reason: plan.reason, track: plan.tiles, widen };
+    if (mode === 'metro') {
+      for (const t of plan.tiles) {
+        if (w.stopKind[t] === 2 && !tiles.includes(t)) continue;
+        cost += COST.track + (w.water[t] ? COST.trackWater : 0);
+      }
+    } else if (mode === 'tram') {
+      const seen = new Set<number>();
+      for (const t of plan.tiles) {
+        if (seen.has(t)) continue;
+        seen.add(t);
+        cost += m.trackCost;
+        if (w.road[t] === 1) { cost += COST.upgrade; widen.push(t); }
+      }
+    } else if (mode === 'ferry') {
+      cost += plan.tiles.length * m.trackCost;
+    } else {
+      for (let k = 1; k < plan.tiles.length; k++) cost += Math.hypot(tileX(plan.tiles[k]) - tileX(plan.tiles[k - 1]), tileY(plan.tiles[k]) - tileY(plan.tiles[k - 1])) * m.trackCost;
+      cost = Math.round(cost);
+    }
+    return { cost, ok: true, track: plan.tiles, widen };
+  }
+
+  createBusLine(tiles: number[]): Cmd & { line?: Line } { return this.createLine('bus', tiles); }
+
+  createLine(mode: Mode, tiles: number[]): Cmd & { line?: Line } {
+    const m = MODES[mode];
+    if (mode !== 'bus' && !this.unlocked[mode]) return { ok: false, msg: `${m.label} unlocks at ${m.unlock} residents.` };
+    if (tiles.length < 2) return { ok: false, msg: `A line needs at least two ${m.stopWord}s.` };
     if (this.transit.lines.length >= MAX_LINES) return { ok: false, msg: `That is the most lines the network can run (${MAX_LINES}). Delete one first.` };
-    const q = this.quoteBus(tiles);
+    const q = this.quoteLine(mode, tiles);
     if (!q.ok) return { ok: false, msg: q.reason };
-    if (q.cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + q.cost + '.' };
-    const line = this.transit.createBusLine(tiles);
-    if (!line) return { ok: false, msg: 'Could not route that line.' };
+    if (q.cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + Math.ceil(q.cost).toLocaleString() + '.' };
+    const line = this.transit.createLine(mode, tiles);
+    if (!line) return { ok: false, msg: mode === 'bus' ? 'Could not route that line.' : 'No room for that route.' };
+    if (q.widen.length) this.widenRoads(q.widen);
     this.spend(q.cost);
     this.emit('sfx', 'line');
     return { ok: true, cost: q.cost, line };
+  }
+
+  /** tram rails need a median: streets along the route become avenues */
+  widenRoads(tiles: number[]) {
+    const w = this.world;
+    for (const t of tiles) if (w.road[t] === 1) w.road[t] = 2;
+    w.version.roads++;
+    this.city.refreshAccess();
+    this.emit('roadsChanged');
+  }
+
+  /** what adding one more stop to a line would cost and lay down */
+  quoteExtend(line: Line, tile: number): { cost: number; ok: boolean; reason?: string; track: number[]; widen: number[] } {
+    const m = MODES[line.kind], w = this.world;
+    const why = this.spotCheck(line.kind, tile);
+    if (why) return { cost: 0, ok: false, reason: why, track: [], widen: [] };
+    let cost = w.stop[tile] < 0 ? m.stopCost : 0;
+    if (line.stops.includes(this.transit.stopAt(tile) as any)) return { cost: 0, ok: false, reason: 'That stop is already on this line.', track: [], widen: [] };
+    if (line.kind === 'bus') {
+      const last = line.stops[line.stops.length - 1].tile;
+      const path = this.traffic.router.find(last, tile);
+      return { cost, ok: !!path, reason: path ? undefined : 'Those stops are not connected by road.', track: path ?? [], widen: [] };
+    }
+    const plan = this.transit.planExtension(line, tile);
+    if (!plan.ok) return { cost, ok: false, reason: plan.reason, track: plan.tiles, widen: [] };
+    if (plan.tiles.length < 2) return { cost, ok: false, reason: 'Too close to the last stop.', track: plan.tiles, widen: [] };
+    const widen: number[] = [];
+    const seen = new Set<number>();
+    for (const t of plan.tiles.slice(1)) {
+      if (line.kind === 'tram') { if (!seen.has(t)) { seen.add(t); cost += m.trackCost; if (w.road[t] === 1) { cost += COST.upgrade; widen.push(t); } } }
+      else if (line.kind === 'metro') cost += COST.track + (w.water[t] ? COST.trackWater : 0);
+      else if (line.kind === 'ferry') cost += m.trackCost;
+    }
+    if (line.kind === 'gondola') { const lt = line.stops[line.stops.length - 1].tile; cost += Math.round(Math.hypot(tileX(tile) - tileX(lt), tileY(tile) - tileY(lt)) * m.trackCost); }
+    return { cost, ok: true, track: plan.tiles, widen };
+  }
+
+  /** extend a line by one stop; charges for it */
+  extendLine(line: Line, tile: number): Cmd {
+    const q = this.quoteExtend(line, tile);
+    if (!q.ok) return { ok: false, msg: q.reason };
+    if (q.cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + Math.ceil(q.cost).toLocaleString() + '.' };
+    const r = this.transit.extendLine(line, tile);
+    if (!r.ok) return { ok: false, msg: r.reason };
+    if (q.widen.length) this.widenRoads(q.widen);
+    this.spend(q.cost);
+    this.emit('sfx', 'line');
+    return { ok: true, cost: q.cost };
+  }
+
+  /** extra stops worth placing between two stops so a long hop still serves the blocks in between */
+  autoStops(mode: Mode, a: number, b: number): number[] {
+    if (mode === 'ferry' || mode === 'gondola') return [];
+    const w = this.world;
+    let path: number[] | null = null;
+    if (mode === 'metro') path = this.transit.trackRouter.find(a, b, this.transit.nextLineId, -1, new Set());
+    else path = this.traffic.router.find(a, b);
+    if (!path || path.length < 2) return [];
+    const spacing = mode === 'bus' ? 6 : mode === 'tram' ? 7 : 9;
+    const n = Math.floor(path.length / spacing);
+    if (n < 1) return [];
+    const out: number[] = [];
+    for (let i = 1; i <= n; i++) {
+      const nominal = Math.round((path.length * i) / (n + 1));
+      let pick = -1;
+      for (const o of [0, 1, -1, 2, -2]) {
+        const idx = nominal + o;
+        if (idx <= 1 || idx >= path.length - 2) continue;
+        const t = path[idx];
+        if (this.spotCheck(mode, t)) continue;
+        if (w.stop[t] >= 0) continue;
+        if (mode === 'metro' && (w.road[t] || w.water[t] || w.bld[t] >= 0 || w.park[t])) continue;
+        if (mode !== 'metro' && this.roadDegree(t) >= 3) continue; // not in the middle of a junction
+        pick = t; break;
+      }
+      if (pick >= 0 && !out.includes(pick)) out.push(pick);
+    }
+    return out;
+  }
+
+  roadDegree(t: number): number {
+    const w = this.world;
+    let n = 0;
+    for (let d = 0; d < 4; d++) { const nx = tileX(t) + DX[d], ny = tileY(t) + DY[d]; if (inMap(nx, ny) && w.road[tileIdx(nx, ny)]) n++; }
+    return n;
   }
 
   /** the tiles a metro route would occupy, for previews and quotes */
   quoteMetro(tiles: number[]): { cost: number; ok: boolean; reason?: string; track: number[] } {
-    const w = this.world;
-    let cost = COST.train;
-    for (const t of tiles) {
-      if (w.water[t] || w.bld[t] >= 0) return { cost, ok: false, reason: 'Stations need open ground or a road.', track: [] };
-      if (!w.isUnlocked(t)) return { cost, ok: false, reason: 'Unlock that district first.', track: [] };
-      if (w.stopKind[t] === 1) return { cost, ok: false, reason: 'That tile has a bus stop.', track: [] };
-      if (w.stop[t] < 0) cost += COST.station;
-    }
-    const plan = this.transit.planMetro(tiles, this.transit.nextLineId);
-    if (!plan.ok) return { cost, ok: false, reason: plan.reason, track: plan.tiles };
-    for (const t of plan.tiles) {
-      if (w.stopKind[t] === 2 && !tiles.includes(t)) continue;
-      cost += COST.track + (w.water[t] ? COST.trackWater : 0);
-    }
-    return { cost, ok: true, track: plan.tiles };
+    const q = this.quoteLine('metro', tiles);
+    return { cost: q.cost, ok: q.ok, reason: q.reason, track: q.track };
   }
 
-  createMetroLine(tiles: number[]): Cmd & { line?: Line } {
-    if (!this.unlocked.metro) return { ok: false, msg: 'Metro unlocks at ' + UNLOCK.metro + ' residents.' };
-    if (tiles.length < 2) return { ok: false, msg: 'A line needs at least two stations.' };
-    if (this.transit.lines.length >= MAX_LINES) return { ok: false, msg: `That is the most lines the network can run (${MAX_LINES}). Delete one first.` };
-    const q = this.quoteMetro(tiles);
-    if (!q.ok) return { ok: false, msg: q.reason };
-    if (q.cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + q.cost.toLocaleString() + '.' };
-    const line = this.transit.createMetroLine(tiles);
-    if (!line) return { ok: false, msg: 'No room for that track.' };
-    this.spend(q.cost);
-    this.emit('sfx', 'line');
-    return { ok: true, cost: q.cost, line };
-  }
+  createMetroLine(tiles: number[]): Cmd & { line?: Line } { return this.createLine('metro', tiles); }
 
   addVehicle(line: Line): Cmd {
     const c = this.transit.vehicleCost(line);
@@ -632,15 +806,16 @@ export class Game {
     return { ok: true };
   }
   deleteLine(line: Line): Cmd {
-    const refund = Math.round((line.kind === 'bus' ? 90 : 500) + line.vehicles.length * this.transit.vehicleCost(line) * 0.4);
+    const m = MODES[line.kind];
+    const refund = Math.round(60 + (line.kind === 'gondola' ? this.transit.lineLength(line) : line.tiles.length) * m.trackCost * 0.3 + line.vehicles.length * m.vehCost * 0.4);
     this.transit.deleteLine(line);
     this.earn(refund);
     this.emit('sfx', 'demolish');
     return { ok: true, cost: -refund };
   }
   expandStop(s: Stop): Cmd {
-    const c = s.kind === 'bus' ? COST.expandBus : COST.expandStation;
-    if (s.cap >= (s.kind === 'bus' ? 48 : 150)) return { ok: false, msg: 'Fully expanded.' };
+    const c = MODES[s.kind].expandCost;
+    if (s.cap >= MODES[s.kind].stopMax) return { ok: false, msg: 'Fully expanded.' };
     if (this.money < c) return { ok: false, msg: 'Not enough money.' };
     this.spend(c);
     s.cap = Math.round(s.cap * 1.5);
@@ -669,7 +844,7 @@ export class Game {
 
   // ---------------------------------------------------------------- queries
 
-  stopCatchment(kind: 'bus' | 'metro') { return kind === 'bus' ? WALK_R_BUS : WALK_R_METRO; }
+  stopCatchment(kind: Mode) { return MODES[kind].walkR; }
 
   buildingAt(i: number): Building | null {
     const id = this.world.bld[i];
@@ -684,9 +859,12 @@ export class Game {
 export interface SaveData {
   v: 1; seed: number; t: number; money: number; name: string; stability: number; goalIdx: number; bestPop: number;
   policies: Policies; districts: number[]; roads: number[]; parks: number[];
-  buildings: number[][]; stops: [number, number, string, number][]; lines: { kind: 'bus' | 'metro'; tiles: number[]; color: number; name: string; veh: number }[];
+  buildings: number[][]; stops: [number, number, string, number][]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number }[];
   daysSurvived: number; dayIncome: number; peak: number; diff?: number;
 }
+
+// save order: bus 0 and metro 1 match the first save format
+const SAVE_MODES: Mode[] = ['bus', 'metro', 'tram', 'ferry', 'gondola'];
 
 export function serialize(g: Game): SaveData {
   const w = g.world;
@@ -694,7 +872,7 @@ export function serialize(g: Game): SaveData {
   for (let i = 0; i < N * N; i++) { if (w.road[i]) roads.push(i, w.road[i]); if (w.park[i]) parks.push(i); }
   const code = { res: 0, com: 1, ind: 2 } as const;
   const buildings = [...g.city.buildings.values()].map((b) => [b.x, b.y, b.special ? 3 : code[b.kind], b.level, b.variant, b.rot, b.residents.length]);
-  const stops = g.transit.stops.map((s) => [s.tile, s.kind === 'bus' ? 0 : 1, s.name, s.cap] as [number, number, string, number]);
+  const stops = g.transit.stops.map((s) => [s.tile, SAVE_MODES.indexOf(s.kind), s.name, s.cap] as [number, number, string, number]);
   const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length }));
   return {
     v: 1, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
@@ -722,15 +900,15 @@ export function restore(d: SaveData): Game {
     for (let i = 0; i < res; i++) g.city.createPerson(b);
   }
   for (const p of g.city.persons) g.city.assignJob(p);
-  for (const [tile, k, name, cap] of d.stops) { const s = g.transit.addStop(tile, k === 0 ? 'bus' : 'metro', name); s.cap = cap; }
+  for (const [tile, k, name, cap] of d.stops) { const s = g.transit.addStop(tile, SAVE_MODES[k] ?? 'bus', name); s.cap = cap; }
   for (const l of d.lines) {
-    const line = l.kind === 'bus' ? g.transit.createBusLine(l.tiles) : g.transit.createMetroLine(l.tiles);
+    const line = g.transit.createLine(l.kind, l.tiles);
     if (!line) continue;
     line.color = l.color; line.name = l.name;
     while (line.vehicles.length < l.veh) if (!g.transit.addVehicle(line)) break;
   }
   g.city.updateStats();
-  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.arena = false;
+  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.tram = g.unlocked.ferry = g.unlocked.gondola = g.unlocked.arena = false;
   (g as any).updateUnlocks(true);
   g.daysSurvived = d.daysSurvived;
   g.emit('roadsChanged');

@@ -371,7 +371,7 @@ export class TimeOfDay {
     this.fill.color.setRGB(0.72, 0.82, 1.0);
     lerpCol(this.hemi.color, a.hemiS, b.hemiS, s);
     lerpCol(this.hemi.groundColor, a.hemiG, b.hemiG, s);
-    this.hemi.intensity = lerp(a.hemiI, b.hemiI, s) * (1 + rain * 0.15);
+    this.hemi.intensity = lerp(a.hemiI, b.hemiI, s) * (1 + rain * 0.15) * 0.62;
     const fogc = lerpCol(new THREE.Color(), a.fog, b.fog, s);
     if (rain > 0.001) fogc.lerp(new THREE.Color(0x9aa4ae), rain * 0.7);
     this.fog.color.copy(fogc);

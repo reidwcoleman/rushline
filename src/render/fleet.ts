@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { MeshBuilder, patch, lin, instAttr, tmpObj } from './gfx.ts';
 import type { Traffic } from '../sim/traffic.ts';
 import type { Transit } from '../sim/transit.ts';
-import type { World } from '../sim/world.ts';
+import { WATER_LEVEL, type World } from '../sim/world.ts';
+import type { Line } from '../sim/types.ts';
 
 export const TRACK_Y = 0.92;
 
@@ -105,6 +106,86 @@ function trainGeo(nose: boolean) {
   return b.geometry();
 }
 
+
+function tramGeo(nose: boolean) {
+  const b = new MeshBuilder();
+  const L = 0.2, Wd = 0.1, H = 0.1, y0 = 0.008;
+  b.paintW = 0;
+  b.box(0, y0, 0, L, H, Wd, lin(0xece8de));
+  b.paintW = 1;
+  b.box(0, y0 + 0.012, 0, L + 0.002, 0.026, Wd + 0.003, WHITE);        // livery band (line colour)
+  b.box(0, y0 + H - 0.004, 0, L - 0.012, 0.012, Wd - 0.012, WHITE);     // roof stripe
+  b.paintW = 0;
+  b.box(0, y0 + 0.05, 0, L - 0.02, 0.038, Wd + 0.004, GLASS, { emit: 1.0 });
+  b.box(0, y0 + H + 0.004, 0, L - 0.02, 0.008, Wd - 0.03, lin(0x9aa3ac));
+  b.box(0.02, y0 + H + 0.012, 0, 0.05, 0.01, 0.045, lin(0x6d757e));    // pantograph
+  b.box(0.02, y0 + H + 0.022, 0, 0.012, 0.004, 0.05, lin(0x3a4048));
+  if (nose) {
+    b.box(L / 2 + 0.01, y0, 0, 0.02, H * 0.92, Wd * 0.94, lin(0xece8de));
+    b.box(L / 2 + 0.024, y0 + 0.006, 0, 0.012, H * 0.76, Wd * 0.82, lin(0xece8de));
+    b.box(L / 2 + 0.018, y0 + 0.045, 0, 0.012, 0.042, Wd * 0.72, GLASS, { emit: 0.35 });
+    b.paintW = 1;
+    b.box(L / 2 + 0.016, y0 + 0.01, 0, 0.026, 0.024, Wd * 0.9, WHITE);
+    b.paintW = 0;
+    for (const s of [-1, 1]) b.box(L / 2 + 0.031, y0 + 0.026, s * 0.03, 0.006, 0.012, 0.016, HEAD, { emit: 5 });
+  } else {
+    b.box(L / 2 + 0.004, y0 + 0.01, 0, 0.012, H * 0.8, Wd * 0.9, lin(0x2b3037));   // articulation bellows
+  }
+  return b.geometry();
+}
+
+function ferryGeo() {
+  const b = new MeshBuilder();
+  const L = 0.62, Wd = 0.2;
+  const HULL = lin(0xf4f2ea), NAVY = lin(0x24415c);
+  b.paintW = 0;
+  b.box(-0.02, -0.03, 0, L - 0.1, 0.034, Wd - 0.02, NAVY);                      // below the waterline
+  b.box(-0.02, 0.0, 0, L - 0.08, 0.05, Wd, HULL);
+  b.paintW = 1;
+  b.box(-0.02, 0.022, 0, L - 0.08, 0.016, Wd + 0.004, WHITE);                   // stripe in the line colour
+  b.paintW = 0;
+  // bow
+  b.box(L / 2 - 0.05, 0.0, 0, 0.08, 0.05, Wd * 0.74, HULL);
+  b.box(L / 2 - 0.0, 0.0, 0, 0.06, 0.05, Wd * 0.42, HULL);
+  b.box(L / 2 + 0.03, 0.01, 0, 0.02, 0.04, Wd * 0.18, HULL);
+  b.box(L / 2 - 0.05, -0.03, 0, 0.08, 0.034, Wd * 0.6, NAVY);
+  // stern
+  b.box(-L / 2 + 0.005, -0.01, 0, 0.03, 0.05, Wd * 0.9, HULL);
+  // main deck cabin with a lit window band
+  b.box(-0.04, 0.05, 0, 0.34, 0.06, Wd - 0.04, lin(0xeef0f2));
+  b.box(-0.04, 0.072, 0, 0.32, 0.026, Wd - 0.032, GLASS, { emit: 1.1 });
+  b.box(-0.07, 0.11, 0, 0.22, 0.045, Wd - 0.08, lin(0xeef0f2));
+  b.box(-0.07, 0.122, 0, 0.2, 0.02, Wd - 0.072, GLASS, { emit: 1.1 });
+  b.box(-0.07, 0.155, 0, 0.25, 0.008, Wd - 0.06, lin(0xcfd4da));                // roof
+  b.box(0.1, 0.05, 0, 0.1, 0.02, Wd * 0.5, lin(0xd9dde1));                        // fore deck
+  // funnel in line colour + mast with a nav light
+  b.paintW = 1;
+  b.cyl(-0.12, 0.156, 0, 0.026, 0.022, 0.05, WHITE, 8);
+  b.paintW = 0;
+  b.cyl(-0.12, 0.2, 0, 0.026, 0.026, 0.008, lin(0x2a2f36), 8);
+  b.box(0.0, 0.163, 0, 0.008, 0.07, 0.008, lin(0xcfd4da));
+  b.box(0.0, 0.232, 0, 0.012, 0.012, 0.012, lin(0xfff1c8), { emit: 4 });
+  for (const s of [-1, 1]) b.box(L / 2 - 0.03, 0.045, s * 0.05, 0.01, 0.008, 0.01, s > 0 ? lin(0x35d07f) : lin(0xff4b4b), { emit: 3 });
+  b.box(-L / 2 + 0.002, 0.04, 0, 0.008, 0.008, 0.01, lin(0xffffff), { emit: 3 });
+  // lifebuoys
+  for (const s of [-1, 1]) b.box(-0.04, 0.1, s * (Wd / 2 - 0.004), 0.02, 0.02, 0.006, lin(0xff6b3d));
+  return b.geometry();
+}
+
+function cabinGeo() {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.box(0, 0.08, 0, 0.012, 0.075, 0.012, lin(0x3a4048));                       // hanger up to the grip
+  b.box(0, 0.152, 0, 0.05, 0.016, 0.02, lin(0x4a515c));                         // grip on the cable
+  b.paintW = 1;
+  b.box(0, 0.015, 0, 0.1, 0.07, 0.085, WHITE);                                   // body in the line colour
+  b.paintW = 0;
+  b.box(0, 0.036, 0, 0.102, 0.036, 0.087, GLASS, { emit: 1.0 });
+  b.box(0, 0.085, 0, 0.09, 0.006, 0.075, lin(0xe9edf1));
+  b.box(0, 0.0, 0, 0.09, 0.014, 0.075, lin(0xdfe3e7));
+  return b.geometry();
+}
+
 interface FPool { mesh: THREE.InstancedMesh; tint: THREE.InstancedBufferAttribute; n: number; cap: number }
 
 export class Fleet {
@@ -113,6 +194,10 @@ export class Fleet {
   private bus: FPool;
   private trainHead: FPool;
   private trainMid: FPool;
+  private tramHead: FPool;
+  private tramMid: FPool;
+  private ferry: FPool;
+  private cabin: FPool;
   private mat: THREE.MeshStandardMaterial;
 
   constructor(scene: THREE.Scene, readonly world: World) {
@@ -132,6 +217,10 @@ export class Fleet {
     this.bus = mk(busGeo(), 160);
     this.trainHead = mk(trainGeo(true), 160);
     this.trainMid = mk(trainGeo(false), 160);
+    this.tramHead = mk(tramGeo(true), 100);
+    this.tramMid = mk(tramGeo(false), 100);
+    this.ferry = mk(ferryGeo(), 60);
+    this.cabin = mk(cabinGeo(), 220);
     scene.add(this.group);
   }
 
@@ -146,10 +235,10 @@ export class Fleet {
     p.n++;
   }
 
-  update(traffic: Traffic, transit: Transit, accidents: Iterable<number> = []) {
+  update(traffic: Traffic, transit: Transit, accidents: Iterable<number> = [], cableY: (line: Line, d: number) => number = () => 1, time = 0) {
     const w = this.world;
     for (const c of this.cars) c.n = 0;
-    this.bus.n = 0; this.trainHead.n = 0; this.trainMid.n = 0;
+    this.bus.n = 0; this.trainHead.n = 0; this.trainMid.n = 0; this.tramHead.n = 0; this.tramMid.n = 0; this.ferry.n = 0; this.cabin.n = 0;
     const tmpC = new THREE.Color();
     for (const v of traffic.vehicles) {
       if (v.dead) continue;
@@ -174,8 +263,39 @@ export class Fleet {
     }
     const pos = { x: 0, z: 0, ang: 0 };
     for (const line of transit.lines) {
-      if (line.kind !== 'metro' || !line.poly) continue;
+      if (line.kind === 'bus' || !line.poly) continue;
       tmpC.set(line.color);
+      if (line.kind === 'tram') {
+        for (const c of line.vehicles) {
+          const dir = c.dir;
+          for (let k = 0; k < 3; k++) {
+            line.poly.at(c.d - dir * k * 0.207, c.off, pos);
+            const ang = pos.ang + (dir < 0 ? Math.PI : 0);
+            const tx = Math.floor(pos.x + 20), ty = Math.floor(pos.z + 20);
+            const y = 0.0215 + (tx >= 0 && ty >= 0 && tx < 40 && ty < 40 && w.water[ty * 40 + tx] ? 0.022 : 0);
+            if (k === 0) this.putLin(this.tramHead, pos.x, y, pos.z, ang, tmpC);
+            else if (k === 2) this.putLin(this.tramHead, pos.x, y, pos.z, ang + Math.PI, tmpC);
+            else this.putLin(this.tramMid, pos.x, y, pos.z, ang, tmpC);
+          }
+        }
+        continue;
+      }
+      if (line.kind === 'ferry') {
+        for (const c of line.vehicles) {
+          line.poly.at(c.d, c.off, pos);
+          const bob = Math.sin(time * 1.7 + c.id * 2.1) * 0.006;
+          this.putLin(this.ferry, pos.x, WATER_LEVEL + 0.012 + bob, pos.z, pos.ang + (c.dir < 0 ? Math.PI : 0), tmpC);
+        }
+        continue;
+      }
+      if (line.kind === 'gondola') {
+        for (const c of line.vehicles) {
+          line.poly.at(c.d, c.off, pos);
+          const y = cableY(line, c.d) - 0.152;
+          this.putLin(this.cabin, pos.x, y + Math.sin(time * 1.3 + c.id) * 0.002, pos.z, pos.ang + (c.dir < 0 ? Math.PI : 0), tmpC);
+        }
+        continue;
+      }
       for (const c of line.vehicles) {
         const dir = c.dir;
         const lateral = c.off;
@@ -191,7 +311,7 @@ export class Fleet {
         }
       }
     }
-    for (const p of [...this.cars, this.bus, this.trainHead, this.trainMid]) {
+    for (const p of [...this.cars, this.bus, this.trainHead, this.trainMid, this.tramHead, this.tramMid, this.ferry, this.cabin]) {
       p.mesh.count = p.n;
       p.mesh.instanceMatrix.needsUpdate = true;
       p.tint.needsUpdate = true;
