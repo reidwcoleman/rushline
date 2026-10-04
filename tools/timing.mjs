@@ -1,0 +1,11 @@
+import { chromium } from 'playwright-core';
+const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 800, height: 450 } });
+const T = (l, t0) => console.log(l.padEnd(18), Date.now() - t0, 'ms');
+let t0 = Date.now();
+await page.goto('http://localhost:5330/?hold&seed=4&play=1', { waitUntil: 'load' }); T('goto', t0); t0 = Date.now();
+await page.waitForFunction(() => window.__ready === true); T('ready', t0); t0 = Date.now();
+await page.evaluate(() => { __cam(0, 0, 78, 0.3, 1.25); __pump(4); }); T('pump', t0); t0 = Date.now();
+await page.waitForTimeout(150); T('wait', t0); t0 = Date.now();
+await page.screenshot({ path: 'shots/timing.png' }); T('screenshot', t0);
+await browser.close();

@@ -27,6 +27,7 @@ page.on('console', (m) => {
 page.on('pageerror', (e) => logs.push('[pageerror] ' + e.message));
 page.setDefaultTimeout(180000);
 const t0 = Date.now();
+const lap = (l) => console.log(`[t] ${l} ${Date.now() - t0}ms`);
 await page.goto(url, { waitUntil: 'load' });
 try {
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 180000 });
@@ -45,8 +46,12 @@ for (let i = 0; i < outs.length; i++) {
   }
   if (pump) await page.evaluate((n) => window.__pump && window.__pump(n), pump);
   await page.waitForTimeout(+opt('wait', 150));
+  lap('before screenshot');
   await page.screenshot({ path: outs[i] });
+  lap('after screenshot');
   console.log('saved', outs[i]);
 }
 for (const l of logs.slice(0, 40)) console.log(l);
+lap('closing');
 await browser.close();
+lap('closed');

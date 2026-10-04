@@ -373,7 +373,7 @@ export class Hud {
       if (!adj) continue;
       const cx = (d.col * DS + DS / 2) - 20 , cz = (d.row * DS + DS / 2) - 20;
       const p = rig.toScreen(this.tmpV.set(cx, 0.1, cz));
-      if (!p.visible || p.x < 175 || p.x > innerWidth - 110 || p.y < 125 || p.y > innerHeight - 90) continue;
+      if (!p.visible || p.x < 175 || p.x > innerWidth - 110 || p.y < 125 || p.y > innerHeight - 90 || (p.x > innerWidth - 340 && p.y < 170)) continue;
       shown.add(d.index);
       let el = this.distLbl.get(d.index);
       const afford = g.money >= d.cost;
