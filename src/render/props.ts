@@ -173,7 +173,7 @@ export class Props {
     let np = 0;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = tileIdx(x, y);
-      if (!w.road[i]) continue;
+      if (!w.surf(i)) continue;
       const h = ((x * 73856093) ^ (y * 19349663)) >>> 0;
       if ((h % 100) > 52) continue;
       const cx = ((h >> 3) & 1) ? 1 : -1, cz = ((h >> 4) & 1) ? 1 : -1;

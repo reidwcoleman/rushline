@@ -1,6 +1,7 @@
 // Right-hand panels: inspect (building / stop / road / line), lines list, policies.
 import { h, icon, clear, money, fmt } from './dom.ts';
 import { COST, UNLOCK } from '../sim/game.ts';
+import { roadLabel } from './tools.ts';
 import { MODES, isCargoMode } from '../sim/modes.ts';
 import { CARGO_INFO, CARGO_LIST, FACILITY, isIndustry, sellsIdx, OUT_CAP, STOCK_CAP } from '../sim/industry.ts';
 import { DAY } from '../sim/types.ts';
@@ -238,13 +239,26 @@ export class Panels {
 
   private roadPanel(tile: number): Built {
     const g = this.app.game, w = g.world;
-    const kind = () => (w.road[tile] === 2 ? 'Avenue' : w.water[tile] ? 'Bridge' : 'Street');
+    const kind = () => roadLabel(w, tile);
     const [r1, v1] = this.row('Speed', '');
     const [r2, v2] = this.row('Traffic', '');
     const m = this.meter(0);
     const up = h('button', { class: 'btn sm primary', onClick: () => { const r = g.buildRoad([tile], 2); if (!r.ok) this.app.toast(r.msg ?? '', 'warn'); else this.app.panels.sync(); } }, `Widen to avenue · ${money(COST.upgrade)}`);
+    // junction control: what governs this crossing
+    const jbtn = (label: string, code: 0 | 1 | 2 | 'ramp', cost: number) => h('button', {
+      class: 'btn sm', onClick: () => { const r = g.setJunction(tile, code); if (!r.ok) this.app.toast(r.msg ?? '', 'warn'); else upd(); },
+    }, cost ? `${label} · ${money(cost)}` : label);
+    const bRab = jbtn('Roundabout', 2, COST.roundabout), bSig = jbtn('Signals', 1, COST.signal), bPlain = jbtn('Plain', 0, 0), bRamp = jbtn('Make interchange', 'ramp', COST.ramp);
+    const jrow = h('div', { class: 'actions' }, bRab, bSig, bPlain, bRamp);
     const upd = () => {
       if (!w.road[tile]) { this.app.tools.setSelection(null); return; }
+      const t3 = el.querySelector('h3'); if (t3) t3.textContent = kind();
+      const jc = g.unlocked.junction;
+      const canJ = w.surf(tile) && w.degree(tile) >= 3;
+      bRab.style.display = canJ && jc ? '' : 'none'; bSig.style.display = canJ && jc ? '' : 'none'; bPlain.style.display = canJ && jc && w.ctl[tile] ? '' : 'none';
+      bRab.classList.toggle('on', w.ctl[tile] === 2); bSig.classList.toggle('on', w.ctl[tile] === 1);
+      bRamp.style.display = jc && g.junctionCheck(tile, 'ramp') === null ? '' : 'none';
+      jrow.style.display = jc && (canJ || bRamp.style.display === '') ? '' : 'none';
       const c = g.traffic.cong[tile];
       v1.textContent = `${Math.round(c * 100)}% of free flow`;
       const l = g.traffic.load[tile];
@@ -254,6 +268,7 @@ export class Panels {
     };
     const el = this.shell(kind(), `Tile ${tileX(tile)}, ${tileY(tile)}`,
       h('div', { class: 'kv' }, r1, r2, m.el),
+      jrow,
       h('div', { class: 'actions' }, up, h('button', { class: 'btn danger sm', onClick: () => { g.bulldoze(tile); this.app.tools.setSelection(null); } }, 'Remove road')));
     upd();
     return { el, update: upd };

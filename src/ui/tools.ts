@@ -1,6 +1,6 @@
 // Tools and input: pointer / keyboard handling, drafting roads and lines, selection and previews.
 import { Game, COST, UNLOCK, SERVICE, type ServiceKind } from '../sim/game.ts';
-import { N, HALF, tileIdx, tileX, tileY, wx, wz, inMap, DX, DY } from '../sim/world.ts';
+import { N, HALF, tileIdx, tileX, tileY, wx, wz, inMap, DX, DY, type World } from '../sim/world.ts';
 import { MODES, MODE_ORDER, CARGO_ORDER, isRoadMode, isCargoMode, type Mode } from '../sim/modes.ts';
 import { isIndustry, CATCH } from '../sim/industry.ts';
 import type { Line } from '../sim/types.ts';
@@ -10,8 +10,12 @@ import { TRACK_Y } from '../render/fleet.ts';
 import { money } from './dom.ts';
 import { venueLabel } from '../sim/people.ts';
 
-export type ToolId = 'inspect' | 'road' | 'avenue' | 'transit' | 'park' | 'arena' | 'bulldoze' | 'service';
-export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'transit', 'park', 'arena', 'bulldoze', 'service'];
+export type ToolId = 'inspect' | 'road' | 'avenue' | 'highway' | 'transit' | 'park' | 'arena' | 'bulldoze' | 'service' | 'junction';
+export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'highway', 'transit', 'park', 'arena', 'bulldoze', 'service', 'junction'];
+export const isRoadTool = (t: ToolId) => t === 'road' || t === 'avenue' || t === 'highway';
+/** what the junction tool does on click */
+export type JMode = 'roundabout' | 'signals' | 'plain' | 'ramp';
+export const JCODE: Record<JMode, 0 | 1 | 2 | 'ramp'> = { roundabout: 2, signals: 1, plain: 0, ramp: 'ramp' };
 
 export type Selection = { type: 'building'; id: number } | { type: 'person'; id: number } | { type: 'stop'; id: number } | { type: 'road'; tile: number } | { type: 'line'; id: number } | null;
 
@@ -23,6 +27,8 @@ export class Tools {
   /** which family of lines the transit tool is building */
   group: 'people' | 'cargo' = 'people';
   service: ServiceKind = 'school';
+  jmode: JMode = 'roundabout';
+  lastRoad: ToolId = 'road';
   autoStops = true;
   hover: { tile: number; x: number; z: number } | null = null;
   draft: Draft | null = null;
@@ -60,6 +66,9 @@ export class Tools {
 
   select(t: ToolId) {
     if (t === 'avenue' && !this.game.unlocked.avenue) { this.app.toast(`Avenues unlock at ${UNLOCK.avenue} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (t === 'highway' && !this.game.unlocked.highway) { this.app.toast(`Highways unlock at ${UNLOCK.highway} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (t === 'junction' && !this.game.unlocked.junction) { this.app.toast(`Junction control unlocks at ${UNLOCK.junction} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (isRoadTool(t)) this.lastRoad = t;
     if (t === 'service' && !this.game.unlocked.school) { this.app.toast(`Schools unlock at ${UNLOCK.school} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (t === 'arena' && !this.game.unlocked.arena) { this.app.toast(`The arena unlocks at ${UNLOCK.arena.toLocaleString()} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (this.tool === t && t !== 'inspect') { this.cancelDraft(); this.tool = 'inspect'; this.app.hud.refreshTools(); this.refreshPreview(true); return; }
@@ -70,6 +79,25 @@ export class Tools {
     this.app.sound.sfx('click');
     this.app.hud.refreshTools();
     this.app.panels.sync();
+    this.refreshPreview(true);
+  }
+
+  /** switch between street, avenue and highway without toggling the tool off */
+  setRoadType(t: 'road' | 'avenue' | 'highway') {
+    if (t === 'avenue' && !this.game.unlocked.avenue) { this.app.toast(`Avenues unlock at ${UNLOCK.avenue} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (t === 'highway' && !this.game.unlocked.highway) { this.app.toast(`Highways unlock at ${UNLOCK.highway} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    this.cancelDraft();
+    this.tool = t; this.lastRoad = t; this.drag = null; this.selection = null;
+    this.app.sound.sfx('click');
+    this.app.hud.refreshTools();
+    this.app.panels.sync();
+    this.refreshPreview(true);
+  }
+
+  setJMode(m: JMode) {
+    this.jmode = m; this.tool = 'junction';
+    this.app.sound.sfx('click');
+    this.app.hud.refreshTools();
     this.refreshPreview(true);
   }
 
@@ -232,9 +260,14 @@ export class Tools {
     if (!pk || pk.tile < 0) return;
     const t = pk.tile;
     switch (this.tool) {
-      case 'road': case 'avenue':
+      case 'road': case 'avenue': case 'highway':
         this.drag = { start: t, cur: t, tiles: [t], paint: false };
         break;
+      case 'junction': {
+        const r = this.game.setJunction(t, JCODE[this.jmode]);
+        if (!r.ok) { this.app.toast(r.msg ?? 'Cannot do that here.', 'warn'); this.app.sound.sfx('error'); }
+        break;
+      }
       case 'arena': {
         const r = this.game.placeArena(t);
         if (!r.ok) { this.app.toast(r.msg ?? 'Cannot build there.', 'warn'); this.app.sound.sfx('error'); }
@@ -270,8 +303,8 @@ export class Tools {
     const d = this.drag!;
     this.drag = null;
     if (d.paint) { this.bulldozed.clear(); this.refreshPreview(true); return; }
-    if (this.tool === 'road' || this.tool === 'avenue') {
-      const r = this.game.buildRoad(d.tiles, this.tool === 'avenue' ? 2 : 1);
+    if (isRoadTool(this.tool)) {
+      const r = this.game.buildRoad(d.tiles, this.tool === 'highway' ? 3 : this.tool === 'avenue' ? 2 : 1);
       if (!r.ok) { this.app.toast(r.msg ?? 'Cannot build there.', 'warn'); this.app.sound.sfx('error'); }
       else if (!this.app.tutorialDone.road) this.app.tutorialDone.road = true;
     }
@@ -404,6 +437,8 @@ export class Tools {
       case 'Digit6': this.select('arena'); break;
       case 'Digit7': this.select('bulldoze'); break;
       case 'Digit8': this.select('service'); break;
+      case 'Digit9': this.select('highway'); break;
+      case 'Digit0': this.select('junction'); break;
       case 'BracketRight': if (this.tool === 'transit') this.cycleMode(1); break;
       case 'BracketLeft': if (this.tool === 'transit') this.cycleMode(-1); break;
       case 'Space': e.preventDefault(); this.app.togglePause(); break;
@@ -481,13 +516,28 @@ export class Tools {
           } else if (w.road[hv]) {
             cursors.push({ tile: hv, style: 'info' });
             const sp = g.traffic.cong[hv];
-            this.tip = { text: w.road[hv] === 2 ? 'Avenue' : w.water[hv] ? 'Bridge' : 'Street', sub: sp > 0.8 ? 'Flowing' : sp > 0.45 ? 'Busy' : 'Jammed' };
+            this.tip = { text: roadLabel(w, hv), sub: sp > 0.8 ? 'Flowing' : sp > 0.45 ? 'Busy' : 'Jammed' };
           }
         }
         break;
       }
-      case 'road': case 'avenue': {
-        const level = this.tool === 'avenue' ? 2 : 1;
+      case 'junction': {
+        // light up every tile this control can go on, then judge the one under the pointer
+        const code = JCODE[this.jmode];
+        for (let i = 0; i < w.road.length; i++) {
+          if (!w.road[i]) continue;
+          if (code === 'ramp' ? (w.road[i] === 3 && !w.ramp[i] && g.nextToSurface(i)) : (w.surf(i) && w.degree(i) >= 3 && w.ctl[i] !== code)) cursors.push({ tile: i, style: 'info' });
+        }
+        if (hv >= 0 && w.road[hv]) {
+          const why = g.junctionCheck(hv, code);
+          const cost = g.junctionCost(code);
+          cursors.push({ tile: hv, style: why ? 'bad' : g.money >= cost ? 'ok' : 'bad' });
+          this.quote = { text: cost ? money(cost) : 'Free', ok: !why && g.money >= cost, reason: why ?? (g.money >= cost ? undefined : 'Not enough money') };
+        }
+        break;
+      }
+      case 'road': case 'avenue': case 'highway': {
+        const level = this.tool === 'highway' ? 3 : this.tool === 'avenue' ? 2 : 1;
         const tiles = dragging ? this.drag!.tiles : hv >= 0 ? [hv] : [];
         if (tiles.length) {
           const pr = g.previewRoad(tiles, level);
@@ -627,3 +677,10 @@ export class Tools {
   get toolLabel() { return this.tool; }
 }
 void HALF; void N; void inMap; void DX; void DY;
+
+export function roadLabel(w: World, i: number): string {
+  const r = w.road[i];
+  const base = r === 3 ? (w.ramp[i] ? 'Interchange' : w.water[i] ? 'Highway bridge' : 'Highway') : r === 2 ? 'Avenue' : w.water[i] ? 'Bridge' : 'Street';
+  if (r < 3 && w.ctl[i] && w.degree(i) >= 3) return w.ctl[i] === 2 ? 'Roundabout' : 'Signalled junction';
+  return base;
+}

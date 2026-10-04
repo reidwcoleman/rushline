@@ -25,6 +25,9 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'debt-free', title: 'Debt free', desc: 'Borrow from the bank, then pay it all back.', test: (g) => g.everBorrowed && g.loan === 0 },
   { id: 'contracts-5', title: 'Dependable', desc: 'Finish 5 contracts.', test: (g) => g.contractsDone >= 5 },
   { id: 'research', title: 'State of the art', desc: 'Research every upgrade for one vehicle type.', test: (g) => Object.values(g.research).some((v) => v >= 3) },
+  { id: 'roundabout', title: 'Round and round', desc: 'Build a roundabout.', test: (g) => g.world.ctl.some((c) => c === 2) },
+  { id: 'highway', title: 'Open road', desc: 'Lay 12 tiles of highway.', test: (g) => g.world.road.reduce((n, r) => n + (r === 3 ? 1 : 0), 0) >= 12 },
+  { id: 'overpass', title: 'Grade separated', desc: 'Carry a highway over a street.', test: (g) => g.world.under.some((u) => u > 0) },
   { id: 'survive-30', title: 'Thirty days', desc: 'Keep the city running for 30 days.', test: (g) => g.day >= 31 },
   { id: 'big-city', title: 'Metropolis', desc: 'Reach 9,000 residents.', test: (g) => g.bestPop >= 9000 },
 ];

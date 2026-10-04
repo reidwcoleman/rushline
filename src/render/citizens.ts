@@ -55,13 +55,13 @@ export class CitizensView {
   private nearRoad(x: number, z: number): number {
     const w = this.game.world;
     const tx = Math.floor(x + HALF), ty = Math.floor(z + HALF);
-    if (inMap(tx, ty) && w.road[tileIdx(tx, ty)] && !w.water[tileIdx(tx, ty)]) return tileIdx(tx, ty);
+    if (inMap(tx, ty) && w.surf(tileIdx(tx, ty)) && !w.water[tileIdx(tx, ty)]) return tileIdx(tx, ty);
     let best = -1, bd = 9;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
       const nx = tx + dx, ny = ty + dy;
       if (!inMap(nx, ny)) continue;
       const i = tileIdx(nx, ny);
-      if (!w.road[i] || w.water[i]) continue;
+      if (!w.surf(i) || w.water[i]) continue;
       const d = Math.hypot(wx(nx) - x, wz(ny) - z);
       if (d < bd) { bd = d; best = i; }
     }
@@ -78,7 +78,7 @@ export class CitizensView {
     if (s.dur < 4) { s.path = direct; return; }
     const a = this.nearRoad(s.x0, s.z0), b = this.nearRoad(s.x1, s.z1);
     if (a < 0 || b < 0) { s.path = direct; return; }
-    const tiles = a === b ? [a] : this.game.traffic.router.find(a, b);
+    const tiles = a === b ? [a] : this.game.traffic.router.find(a, b, undefined, true);
     if (!tiles) { s.path = direct; return; }
     const pts: number[] = [s.x0, s.z0];
     for (const t of tiles) pts.push(wx(tileX(t)), wz(tileY(t)));

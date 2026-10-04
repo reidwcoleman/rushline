@@ -5,34 +5,48 @@ import { isSolidCode } from './modes.ts';
 
 export const SPEED_STREET = 1.9;   // tiles per second, free flow
 export const SPEED_AVENUE = 2.7;
+export const SPEED_HIGHWAY = 5.2;
 
-export const freeSpeed = (kind: number) => (kind >= 2 ? SPEED_AVENUE : SPEED_STREET);
+export const freeSpeed = (kind: number) => (kind >= 3 ? SPEED_HIGHWAY : kind === 2 ? SPEED_AVENUE : SPEED_STREET);
 
 export class RoadRouter {
   private g = new Float32Array(N * N);
   private came = new Int32Array(N * N);
+  private jump = new Int32Array(N * N);
   private stamp = new Int32Array(N * N);
   private cur = 0;
   private heap = new MinHeap();
+  private ver = -1;
+  private fast = false;
 
   /** cong[i] in (0,1]: recent speed ratio on tile i (1 = free flow) */
   constructor(private world: World, readonly cong: Float32Array) {}
 
+  private stepCost(w: World, n: number): number {
+    let step = 1 / (freeSpeed(w.eff(n)) * Math.max(0.12, this.cong[n]));
+    if (w.blocked[n] > 0) step += 40;
+    const cl = w.ctl[n];
+    if (cl) step += cl === 1 ? 0.28 : 0.1;
+    return step;
+  }
+
   /**
    * Tile path from `from` to `to` inclusive, or null. `cost` receives the estimated travel seconds.
-   * Honours blocked tiles (accidents) by treating them as very expensive.
+   * Honours blocked tiles (accidents) by treating them as very expensive. `surface` keeps to streets and avenues.
+   * Overpass tiles are crossed in a straight line on the right level, never turned into.
    */
-  find(from: number, to: number, out?: { cost: number }): number[] | null {
+  find(from: number, to: number, out?: { cost: number }, surface = false): number[] | null {
     const w = this.world;
-    if (from < 0 || to < 0 || !w.road[from] || !w.road[to]) return null;
+    if (from < 0 || to < 0 || !w.road[from] || !w.road[to] || w.under[from] || w.under[to]) return null;
     if (from === to) { if (out) out.cost = 0.5; return [from]; }
+    if (this.ver !== w.version.roads) { this.ver = w.version.roads; this.fast = false; for (let i = 0; i < N * N; i++) if (w.road[i] === 3) { this.fast = true; break; } }
     this.cur++;
-    const cur = this.cur, g = this.g, came = this.came, stamp = this.stamp, heap = this.heap;
+    const cur = this.cur, g = this.g, came = this.came, jump = this.jump, stamp = this.stamp, heap = this.heap;
     heap.clear();
     const tx = tileX(to), ty = tileY(to);
-    g[from] = 0; stamp[from] = cur; came[from] = -1;
+    g[from] = 0; stamp[from] = cur; came[from] = -1; jump[from] = 0;
     heap.push(0, from);
-    const H = 1 / SPEED_AVENUE;
+    const H = 1 / (this.fast && !surface ? SPEED_HIGHWAY : SPEED_AVENUE);
     let found = false;
     let guard = 0;
     while (heap.size && guard++ < 6000) {
@@ -43,21 +57,52 @@ export class RoadRouter {
       for (let d = 0; d < 4; d++) {
         const nx = cx + DX[d], ny = cy + DY[d];
         if (!inMap(nx, ny)) continue;
-        const n = tileIdx(nx, ny);
+        let n = tileIdx(nx, ny);
         const rk = w.road[n];
         if (!rk) continue;
-        let step = 1 / (freeSpeed(rk) * Math.max(0.12, this.cong[n]));
-        if (w.blocked[n] > 0) step += 40;
+        let step: number, jmp = 0;
+        if (w.under[n]) {
+          // an overpass: carry straight on along the level we entered on until it ends
+          const hwLayer = (d & 1) === w.hwAxis(n);
+          if (hwLayer) {
+            if (surface || w.road[c] !== 3) continue;
+          } else if (!(w.road[c] < 3 || w.ramp[c])) continue;
+          step = 0;
+          let mx = nx, my = ny, m = n, count = 0, okChain = true;
+          while (w.under[m]) {
+            if (((d & 1) === w.hwAxis(m)) !== hwLayer) { okChain = false; break; }
+            step += this.stepCost(w, m);
+            count++;
+            mx += DX[d]; my += DY[d];
+            if (!inMap(mx, my)) { okChain = false; break; }
+            m = tileIdx(mx, my);
+          }
+          if (!okChain || !w.road[m]) continue;
+          if (hwLayer ? w.road[m] !== 3 : !(w.road[m] < 3 || w.ramp[m])) continue;
+          n = m; jmp = count * 8 + d;
+          step += this.stepCost(w, n);
+        } else {
+          if (!w.linked(c, n)) continue;
+          if (surface && rk === 3) continue;
+          step = this.stepCost(w, n);
+        }
         const ng = cg + step;
         if (stamp[n] !== cur || ng < g[n]) {
-          stamp[n] = cur; g[n] = ng; came[n] = c;
-          heap.push(ng + (Math.abs(nx - tx) + Math.abs(ny - ty)) * H, n);
+          stamp[n] = cur; g[n] = ng; came[n] = c; jump[n] = jmp;
+          heap.push(ng + (Math.abs(tileX(n) - tx) + Math.abs(tileY(n) - ty)) * H, n);
         }
       }
     }
     if (!found) return null;
     const path: number[] = [];
-    for (let c = to; c !== -1; c = came[c]) path.push(c);
+    for (let c = to; c !== -1; c = came[c]) {
+      path.push(c);
+      const j = jump[c];
+      if (j > 0 && c !== from) {
+        const count = j >> 3, d = j & 7, delta = DX[d] + DY[d] * N;
+        for (let k = 1; k <= count; k++) path.push(c - k * delta);
+      }
+    }
     path.reverse();
     if (out) out.cost = g[to];
     return path;

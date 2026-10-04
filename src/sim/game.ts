@@ -15,8 +15,9 @@ import { DAY, dayOf, hourOf, type Ctx, type Building, type Stop, type Line, type
 export const COST = {
   arena: 6000, street: 12, avenue: 38, upgrade: 28, bridge: 60, park: 140, busStop: 80, bus: 200, station: 1000, track: 70, trackWater: 60, train: 900,
   bulldoze: 25, expandBus: 220, expandStation: 600,
+  highway: 95, highwayBridge: 140, ramp: 320, signal: 420, roundabout: 800,
 };
-export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4, school: 22, clinic: 30, airport: 150 };
+export const UPKEEP = { street: 0.7, avenue: 1.8, highway: 3.4, signal: 4, roundabout: 3, park: 4, school: 22, clinic: 30, airport: 150 };
 export const SERVICE = {
   school: { cost: 3800, unlock: 260, label: 'School', tag: 'Pupils walk or ride in every morning. Families want one close.' },
   clinic: { cost: 4800, unlock: 520, label: 'Clinic', tag: 'Keeps seniors healthy and comfortable. Check-ups send people across town.' },
@@ -25,7 +26,7 @@ export const SERVICE = {
 export type ServiceKind = keyof typeof SERVICE;
 
 export const MAX_LINES = 14;
-export const UNLOCK = { avenue: 200, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, airport: SERVICE.airport.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
+export const UNLOCK = { avenue: 200, junction: 150, highway: 800, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, airport: SERVICE.airport.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
 
 export interface Cmd { ok: boolean; msg?: string; cost?: number }
 
@@ -126,7 +127,7 @@ export class Game {
   private stabT = 0;
   lastDay = 1;
   daysSurvived = 0;
-  unlocked = { avenue: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false, school: false, clinic: false, airport: false, truck: false, freight: false };
+  unlocked = { avenue: false, junction: false, highway: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false, school: false, clinic: false, airport: false, truck: false, freight: false };
   match: { tile: number; start: number; end: number; announced: boolean; started: boolean } | null = null;
   nextMatchDay = 0;
 
@@ -544,6 +545,8 @@ export class Game {
     for (let i = 0; i < N * N; i++) {
       if (w.road[i] === 1) up += UPKEEP.street;
       else if (w.road[i] === 2) up += UPKEEP.avenue;
+      else if (w.road[i] === 3) up += UPKEEP.highway;
+      if (w.ctl[i]) up += w.ctl[i] === 1 ? UPKEEP.signal : UPKEEP.roundabout;
       if (w.park[i]) up += UPKEEP.park;
     }
     for (const sp of this.transit.stops) up += MODES[sp.kind].upStop;
@@ -586,6 +589,8 @@ export class Game {
     const p = this.bestPop = Math.max(this.bestPop, this.city.stats.pop);
     const u = this.unlocked;
     if (!u.avenue && p >= UNLOCK.avenue) { u.avenue = true; if (!silent) { this.toast('Avenues unlocked: wider roads that carry twice the cars.', 'good'); this.emit('unlock', 'avenue'); } }
+    if (!u.junction && p >= UNLOCK.junction) { u.junction = true; if (!silent) { this.toast('Junction control unlocked: traffic signals and roundabouts. Junction tool, key 0.', 'good'); this.emit('unlock', 'junction'); } }
+    if (!u.highway && p >= UNLOCK.highway) { u.highway = true; if (!silent) { this.toast('Highways unlocked: fast roads with no side access. Roads tool, key 9. Join them to streets with interchanges.', 'good'); this.emit('unlock', 'highway'); } }
     if (!u.policies && p >= UNLOCK.policies) { u.policies = true; if (!silent) { this.toast('City policies unlocked.', 'good'); this.emit('unlock', 'policies'); } }
     if (!u.arena && p >= UNLOCK.arena) { u.arena = true; if (!silent) { this.toast('Arena unlocked: match days pack the streets and pay well.', 'good'); this.emit('unlock', 'arena'); } }
     for (const k of ['truck', 'freight'] as const) {
@@ -663,7 +668,11 @@ export class Game {
       let best = -1, bl = 0.15;
       for (let k = 0; k < 60; k++) {
         const i = Math.floor(this.rand() * N * N);
-        if (w.road[i] && !w.stop[i] && this.traffic.load[i] > bl) { bl = this.traffic.load[i]; best = i; }
+        if (w.road[i] && !w.stop[i]) {
+          // crossings with nothing controlling them are where cars meet
+          const risk = this.traffic.load[i] * (w.ctl[i] ? 0.5 : w.degree(i) >= 3 && w.road[i] < 3 ? 1.35 : 1);
+          if (risk > bl) { bl = risk; best = i; }
+        }
       }
       if (best >= 0) {
         w.blocked[best] = 22 + this.rand() * 14;
@@ -748,54 +757,162 @@ export class Game {
 
   // ---------------------------------------------------------------- commands: roads, parks, bulldoze
 
-  roadTileCost(i: number, level: number): number {
+  /** for each tile of a straight drag: 0 east-west, 1 north-south, or -1 at the ends and bends */
+  dragAxes(tiles: number[]): number[] {
+    return tiles.map((t, k) => {
+      if (k === 0 || k === tiles.length - 1) return -1;
+      const a = tiles[k - 1], b = tiles[k + 1];
+      if (tileY(a) === tileY(t) && tileY(b) === tileY(t)) return 0;
+      if (tileX(a) === tileX(t) && tileX(b) === tileX(t)) return 1;
+      return -1;
+    });
+  }
+
+  /** axis a plain highway tile runs along (0 east-west, 1 north-south), or -1 */
+  hwyAxisAt(i: number): number {
+    const w = this.world, x = tileX(i), y = tileY(i);
+    const hw = (xx: number, yy: number) => inMap(xx, yy) && w.road[tileIdx(xx, yy)] === 3;
+    if (hw(x - 1, y) && hw(x + 1, y) && !(hw(x, y - 1) || hw(x, y + 1))) return 0;
+    if (hw(x, y - 1) && hw(x, y + 1) && !(hw(x - 1, y) || hw(x + 1, y))) return 1;
+    return -1;
+  }
+
+  /** both sides of tile i, across `axis`, carry a street, so the highway can bridge it */
+  private streetBothSides(i: number, axis: number): boolean {
+    const w = this.world, x = tileX(i), y = tileY(i);
+    const ok = (xx: number, yy: number) => {
+      if (!inMap(xx, yy)) return false;
+      const n = tileIdx(xx, yy), r = w.road[n];
+      return r === 1 || r === 2 || (r === 3 && (w.ramp[n] === 1 || w.under[n] > 0));
+    };
+    return axis === 0 ? ok(x, y - 1) && ok(x, y + 1) : ok(x - 1, y) && ok(x + 1, y);
+  }
+
+  roadTileCost(i: number, level: number, axis = -1): number {
     const w = this.world;
     const cur = w.road[i];
+    if (cur === 3 && level < 3 && !w.ramp[i] && !w.under[i] && axis >= 0 && this.hwyAxisAt(i) === 1 - axis) return COST.ramp;
     if (cur >= level) return 0;
+    if (level === 3) return cur === 0 ? (w.water[i] ? COST.highwayBridge : COST.highway) : COST.ramp;
     let c = cur === 0 ? (level === 2 ? COST.avenue : COST.street) : COST.upgrade;
     if (cur === 0 && w.water[i]) c += COST.bridge;
     return c;
   }
 
-  canRoad(i: number, level: number): string | null {
+  canRoad(i: number, level: number, axis = -1): string | null {
     const w = this.world;
     if (!w.isUnlocked(i)) return 'locked';
     if (w.bld[i] >= 0) return 'building';
     if (w.park[i]) return 'park';
     if (isSolidCode(w.stopKind[i])) return 'station';
     if (w.water[i] && this.transit.boat[i] && w.road[i] === 0) return 'ferry';
-    if (w.road[i] >= level) return 'exists';
+    if (w.road[i] >= level) {
+      // a street drawn straight across a plain highway runs under it
+      if (level < 3 && w.road[i] === 3 && !w.ramp[i] && !w.under[i] && axis >= 0 && this.hwyAxisAt(i) === 1 - axis) return null;
+      return 'exists';
+    }
+    if (level === 3 && w.road[i] && w.stop[i] >= 0) return 'stop';
     return null;
   }
 
-  previewRoad(tiles: number[], level: 1 | 2): { ok: boolean[]; cost: number; reason?: string } {
+  previewRoad(tiles: number[], level: 1 | 2 | 3): { ok: boolean[]; cost: number; reason?: string } {
     const ok: boolean[] = [];
     let cost = 0;
     let reason: string | undefined;
-    for (const i of tiles) {
-      const r = this.canRoad(i, level);
-      if (r === null) { ok.push(true); cost += this.roadTileCost(i, level); }
-      else { ok.push(r === 'exists'); if (r === 'locked') reason = 'Unlock this district first.'; else if (r === 'building') reason ??= 'A building is in the way.'; else if (r === 'park') reason ??= 'Remove the park first.'; else if (r === 'ferry') reason ??= 'A ferry route runs under here. Boats cannot pass a bridge.'; }
+    const axes = this.dragAxes(tiles);
+    for (let k = 0; k < tiles.length; k++) {
+      const i = tiles[k];
+      const r = this.canRoad(i, level, axes[k]);
+      if (r === null) { ok.push(true); cost += this.roadTileCost(i, level, axes[k]); }
+      else { ok.push(r === 'exists'); if (r === 'locked') reason = 'Unlock this district first.'; else if (r === 'building') reason ??= 'A building is in the way.'; else if (r === 'park') reason ??= 'Remove the park first.'; else if (r === 'ferry') reason ??= 'A ferry route runs under here. Boats cannot pass a bridge.'; else if (r === 'stop') reason ??= 'A stop is in the way. Highways cannot cross a stop.'; }
     }
     return { ok, cost, reason };
   }
 
-  buildRoad(tiles: number[], level: 1 | 2): Cmd {
+  buildRoad(tiles: number[], level: 1 | 2 | 3): Cmd {
     if (level === 2 && !this.unlocked.avenue) return { ok: false, msg: 'Avenues unlock at ' + UNLOCK.avenue + ' residents.' };
+    if (level === 3 && !this.unlocked.highway) return { ok: false, msg: 'Highways unlock at ' + UNLOCK.highway + ' residents.' };
     const w = this.world;
     const todo: number[] = [];
+    const axisOf = new Map<number, number>();
     let cost = 0;
-    for (const i of tiles) if (this.canRoad(i, level) === null) { todo.push(i); cost += this.roadTileCost(i, level); }
+    const axes = this.dragAxes(tiles);
+    tiles.forEach((i, k) => { if (this.canRoad(i, level, axes[k]) === null) { todo.push(i); axisOf.set(i, axes[k]); cost += this.roadTileCost(i, level, axes[k]); } });
     if (!todo.length) return { ok: false, msg: 'Nothing to build there.' };
     if (cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + Math.ceil(cost) + '.', cost };
     for (const i of todo) {
+      const ax = axisOf.get(i) ?? -1;
+      if (level === 3) {
+        if (w.road[i]) {
+          // a highway laid across a road bridges it when the road runs straight across, otherwise it becomes an interchange
+          const cur = w.road[i];
+          this.dropTramAt(i);
+          w.ctl[i] = 0;
+          if (ax >= 0 && cur < 3 && this.streetBothSides(i, ax)) { w.under[i] = cur | (ax << 2); w.ramp[i] = 0; }
+          else w.ramp[i] = 1;
+        }
+      } else if (w.road[i] === 3) {
+        // a street run straight under a highway
+        w.under[i] = level | (this.hwyAxisAt(i) << 2);
+        continue;
+      }
       w.road[i] = Math.max(w.road[i], level);
       if (w.tree[i]) { w.tree[i] = 0; }
     }
+    if (level === 3) {
+      // the two ends get an on-ramp when a street is beside them
+      for (const i of [tiles[0], tiles[tiles.length - 1]]) if (w.road[i] === 3 && !w.under[i] && this.nextToSurface(i)) w.ramp[i] = 1;
+    }
     this.spend(cost);
     w.version.roads++;
+    for (const i of todo) if (w.under[i]) this.traffic.tileChanged(i);
     this.city.refreshAccess();
     this.emit('treesChanged');
+    this.emit('roadsChanged');
+    this.emit('sfx', 'build');
+    return { ok: true, cost };
+  }
+
+  private dropTramAt(i: number) {
+    for (const l of [...this.transit.lines]) if (l.kind === 'tram' && l.tiles.includes(i)) { this.transit.deleteLine(l); this.toast(`${l.name} lost its rails to the highway.`, 'warn'); }
+  }
+
+  nextToSurface(i: number): boolean {
+    const w = this.world;
+    for (let d = 0; d < 4; d++) { const nx = tileX(i) + DX[d], ny = tileY(i) + DY[d]; if (inMap(nx, ny) && w.surf(tileIdx(nx, ny))) return true; }
+    return false;
+  }
+
+  /** what a junction tool click would do on this tile */
+  junctionCheck(i: number, ctl: 0 | 1 | 2 | 'ramp'): string | null {
+    const w = this.world;
+    if (!w.road[i]) return 'Click a road.';
+    if (ctl === 'ramp') {
+      if (w.road[i] !== 3) return 'Interchanges go on highway tiles.';
+      if (w.ramp[i]) return 'Already an interchange.';
+      if (!w.under[i] && !this.nextToSurface(i)) return 'An interchange needs a street or avenue beside it.';
+      return null;
+    }
+    if (w.road[i] === 3) return 'Highways have interchanges, not signals.';
+    if (ctl === 0) return w.ctl[i] ? null : 'Already a plain junction.';
+    if (this.world.degree(i) < 3) return 'Only junctions where three or more roads meet.';
+    if (w.ctl[i] === ctl) return ctl === 1 ? 'Already has signals.' : 'Already a roundabout.';
+    if (w.stop[i] >= 0) return 'A stop is on this tile. Move it first.';
+    if (this.transit.lines.some((l) => l.kind === 'tram' && l.tiles.includes(i))) return 'A tram line runs through here.';
+    return null;
+  }
+  junctionCost(ctl: 0 | 1 | 2 | 'ramp'): number { return ctl === 'ramp' ? COST.ramp : ctl === 1 ? COST.signal : ctl === 2 ? COST.roundabout : 0; }
+
+  setJunction(i: number, ctl: 0 | 1 | 2 | 'ramp'): Cmd {
+    if (!this.unlocked.junction) return { ok: false, msg: 'Junction control unlocks at ' + UNLOCK.junction + ' residents.' };
+    const why = this.junctionCheck(i, ctl);
+    if (why) return { ok: false, msg: why };
+    const cost = this.junctionCost(ctl);
+    if (cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + cost + '.', cost };
+    const w = this.world;
+    if (ctl === 'ramp') { w.ramp[i] = 1; w.under[i] = 0; } else w.ctl[i] = ctl;
+    if (cost) this.spend(cost);
+    w.version.roads++;
     this.emit('roadsChanged');
     this.emit('sfx', 'build');
     return { ok: true, cost };
@@ -863,7 +980,7 @@ export class Game {
         const y = rot === 1 ? y0 + fd : rot === 3 ? y0 - 1 : y0 + k;
         if (inMap(x, y)) front.push(tileIdx(x, y));
       }
-      if (needRoad && !front.some((t) => w.road[t])) { lastReason = 'The terminal side needs a road beside it.'; continue; }
+      if (needRoad && !front.some((t) => w.surf(t))) { lastReason = 'The terminal side needs a road beside it.'; continue; }
       return { ok: true, foot, x: x0, y: y0, rot };
     }
     return none(lastReason);
@@ -933,7 +1050,7 @@ export class Game {
     }
     if (w.road[i]) {
       for (const l of [...this.transit.lines]) if (l.kind === 'tram' && l.tiles.includes(i)) { this.transit.deleteLine(l); this.toast(`${l.name} lost its rails with the road.`, 'warn'); }
-      w.road[i] = 0;
+      w.road[i] = 0; w.ramp[i] = 0; w.ctl[i] = 0; w.under[i] = 0;
       w.version.roads++;
       this.traffic.tileRemoved(i);
       this.city.refreshAccess();
@@ -973,9 +1090,9 @@ export class Game {
     if (!w.isUnlocked(t)) return 'Unlock that district first.';
     if (w.stop[t] >= 0) return w.stopKind[t] === m.stopCode ? null : 'That tile already has a different kind of stop.';
     switch (mode) {
-      case 'bus': case 'tram': return w.road[t] ? null : 'Stops go on roads.';
+      case 'bus': case 'tram': return w.surf(t) ? null : w.road[t] ? 'Stops cannot go on a highway.' : 'Stops go on roads.';
       case 'truck': {
-        if (!w.road[t]) return 'Yards go on roads, right beside an industry or shop.';
+        if (!w.surf(t)) return 'Yards go on streets, right beside an industry or shop.';
         const near = this.city.sitesNear(wx(tileX(t)), wz(tileY(t)));
         return near.length ? null : 'No industry or shop within reach. Put the yard beside a farm, quarry, factory, terminal or shop.';
       }
@@ -999,7 +1116,7 @@ export class Game {
     const w = this.world;
     let cost = COST.bus;
     for (const t of tiles) {
-      if (!w.road[t]) return { cost, ok: false, reason: 'Stops go on roads.' };
+      if (!w.surf(t)) return { cost, ok: false, reason: 'Stops go on streets and avenues, not highways.' };
       if (w.stop[t] < 0) cost += COST.busStop;
       else if (w.stopKind[t] !== MODES.bus.stopCode) return { cost, ok: false, reason: 'That tile already has a different kind of stop.' };
     }
@@ -1182,7 +1299,7 @@ export class Game {
   roadDegree(t: number): number {
     const w = this.world;
     let n = 0;
-    for (let d = 0; d < 4; d++) { const nx = tileX(t) + DX[d], ny = tileY(t) + DY[d]; if (inMap(nx, ny) && w.road[tileIdx(nx, ny)]) n++; }
+    for (let d = 0; d < 4; d++) { const nx = tileX(t) + DX[d], ny = tileY(t) + DY[d]; if (inMap(nx, ny) && w.linked(t, tileIdx(nx, ny))) n++; }
     return n;
   }
 
@@ -1264,7 +1381,7 @@ export class Game {
 
 export interface SaveData {
   v: 1; seed: number; t: number; money: number; name: string; stability: number; goalIdx: number; bestPop: number;
-  policies: Policies; districts: number[]; roads: number[]; parks: number[];
+  policies: Policies; districts: number[]; roads: number[]; parks: number[]; jct?: number[];
   buildings: (number | string)[][]; stops: [number, number, string, number][]; people?: PersonSave[]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number; fare?: number }[];
   daysSurvived: number; dayIncome: number; peak: number; diff?: number;
   fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number>; contracts?: Contract[]; done?: number; ach?: string[]; borrowed?: boolean };
@@ -1277,8 +1394,8 @@ const SAVE_MODES: Mode[] = ['bus', 'metro', 'tram', 'ferry', 'gondola', 'truck',
 
 export function serialize(g: Game): SaveData {
   const w = g.world;
-  const roads: number[] = [], parks: number[] = [];
-  for (let i = 0; i < N * N; i++) { if (w.road[i]) roads.push(i, w.road[i]); if (w.park[i]) parks.push(i); }
+  const roads: number[] = [], parks: number[] = [], jct: number[] = [];
+  for (let i = 0; i < N * N; i++) { if (w.road[i]) roads.push(i, w.road[i]); if (w.park[i]) parks.push(i); if (w.road[i] && (w.ctl[i] || w.ramp[i] || w.under[i])) jct.push(i, w.ctl[i] + (w.ramp[i] ? 4 : 0) + (w.under[i] << 3)); }
   const code = { res: 0, com: 1, ind: 2 } as const;
   const blist = [...g.city.buildings.values()];
   const bIndex = new Map(blist.map((b, i) => [b.id, i] as const));
@@ -1293,7 +1410,7 @@ export function serialize(g: Game): SaveData {
   const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length, fare: l.fareMul }));
   return {
     v: 1, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
-    policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, buildings, stops, lines, people,
+    policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, jct, buildings, stops, lines, people,
     daysSurvived: g.daysSurvived, dayIncome: g.dayIncome, peak: g.peakTraffic, diff: g.diff,
     fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research }, contracts: g.contracts.filter((c) => c.state === 'active' || c.state === 'offer'), done: g.contractsDone, ach: [...g.achieved], borrowed: g.everBorrowed },
   };
@@ -1309,6 +1426,7 @@ export function restore(d: SaveData): Game {
   for (const dist of w.districts) w.setUnlocked(dist.index, d.districts.includes(dist.index));
   for (let k = 0; k < d.roads.length; k += 2) { w.road[d.roads[k]] = d.roads[k + 1]; w.tree[d.roads[k]] = 0; }
   for (const p of d.parks) { w.park[p] = 1; w.tree[p] = 0; }
+  if (d.jct) for (let k = 0; k < d.jct.length; k += 2) { w.ctl[d.jct[k]] = d.jct[k + 1] & 3; w.ramp[d.jct[k]] = d.jct[k + 1] & 4 ? 1 : 0; w.under[d.jct[k]] = d.jct[k + 1] >> 3; }
   w.version.roads++;
   g.city.refreshAccess();
   const kinds = ['res', 'com', 'ind'] as const;

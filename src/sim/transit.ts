@@ -171,7 +171,7 @@ export class Transit {
       for (let k = 0; k + 1 < stopTiles.length; k++) {
         const a = stopTiles[k], b = stopTiles[k + 1];
         if (a === b) return fail('Pick a different stop.');
-        const seg = this.traffic.router.find(a, b);
+        const seg = this.traffic.router.find(a, b, undefined, true);
         if (!seg) return fail('Those stops are not connected by road.');
         if (full.length) seg.shift(); else stopIdx.push(0);
         full.push(...seg);

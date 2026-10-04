@@ -132,3 +132,35 @@ export function addAirport(g: Game) {
   }
   return { at: -1, rot: -1 };
 }
+
+/** lay a highway across town with overpasses and an interchange, a roundabout and a signal (screenshots and tests) */
+export function addHighway(g: Game) {
+  const w = g.world;
+  g.money = Math.max(g.money, 300000);
+  g.unlocked.highway = true; g.unlocked.junction = true;
+  let best: number[] = [], bestScore = -1;
+  const scan = (get: (k: number) => number) => {
+    let run: number[] = [];
+    const flush = () => {
+      const par = run.filter((t) => w.road[t] && ((w.surf(t - 1) && w.surf(t + 1)) || (w.surf(t - N) && w.surf(t + N) && !w.surf(t - 1) && false))).length;
+      const sc = run.length - par * 6;
+      if (run.length > 12 && sc > bestScore) { bestScore = sc; best = run; }
+      run = [];
+    };
+    for (let k = 0; k < N; k++) {
+      const t = get(k);
+      if (w.isUnlocked(t) && w.bld[t] < 0 && !w.park[t] && w.stop[t] < 0 && !w.rail[t] && !w.water[t]) run.push(t); else flush();
+    }
+    flush();
+  };
+  for (let y = 8; y < N - 8; y++) scan((k) => tileIdx(k, y));
+  if (best.length < 2) return { at: -1, overpasses: 0, rab: -1, sig: -1, ok: 0 };
+  const r = g.buildRoad(best, 3);
+  const mid = best[Math.floor(best.length / 2)];
+  g.setJunction(mid, 'ramp');
+  const jn = [...Array(N * N).keys()].filter((i) => w.surf(i) && w.degree(i) >= 3).sort((a, b) => Math.hypot((a % N) - 20, ((a / N) | 0) - 20) - Math.hypot((b % N) - 20, ((b / N) | 0) - 20));
+  const rab = jn[3] ?? -1, sig = jn[7] ?? -1;
+  if (rab >= 0) g.setJunction(rab, 2);
+  if (sig >= 0) g.setJunction(sig, 1);
+  return { at: mid, overpasses: best.filter((t) => w.under[t]).length, rab, sig, ok: r.ok ? 1 : 0 };
+}

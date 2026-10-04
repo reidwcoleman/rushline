@@ -147,7 +147,12 @@ export class World {
   terrain: Terrain;
   water = new Uint8Array(N * N);       // 1 = water
   shore = new Uint8Array(N * N);       // 1 = land next to water
-  road = new Uint8Array(N * N);        // 0 none, 1 street, 2 avenue
+  road = new Uint8Array(N * N);        // 0 none, 1 street, 2 avenue, 3 highway
+  ramp = new Uint8Array(N * N);        // 1 = highway tile that joins the roads around it (an interchange)
+  ctl = new Uint8Array(N * N);         // junction control: 0 priority, 1 signals, 2 roundabout
+  under = new Uint8Array(N * N);       // highway tile with a street beneath it: class of that street | (highway axis << 2), 0 none
+  elev = new Float32Array(N * N);      // height of the highway deck at a tile centre
+  private elevVer = -1;
   park = new Uint8Array(N * N);        // 1 = park
   rail = new Uint8Array(N * N);        // line id + 1 of track passing over (0 none)
   bld = new Int32Array(N * N).fill(-1);
@@ -218,6 +223,61 @@ export class World {
   /** buildable ground: land, unlocked */
   buildable(i: number) { return !this.water[i] && this.isUnlocked(i); }
 
+  /** the road class a tile drives like: an interchange behaves as an avenue */
+  eff(i: number): number { const r = this.road[i]; return r === 3 && this.ramp[i] ? 2 : r; }
+  /** street or avenue: the roads buildings face and people walk beside */
+  surf(i: number): boolean { const r = this.road[i]; return r === 1 || r === 2; }
+  /** axis of travel between two adjacent tiles: 0 east-west, 1 north-south */
+  private axisBetween(a: number, b: number): number { return (a % N) !== (b % N) ? 0 : 1; }
+  /** an overpass: a highway tile with a street running beneath it. Axis of the highway on top, or -1 */
+  hwAxis(i: number): number { return this.under[i] ? (this.under[i] >> 2) & 1 : -1; }
+  /** a highway only meets other roads at an interchange; an overpass lets a street pass beneath */
+  linked(a: number, b: number): boolean {
+    const ra = this.road[a], rb = this.road[b];
+    if (!ra || !rb) return false;
+    if (ra === 3 && rb < 3) return this.ramp[a] === 1 || (this.under[a] > 0 && this.axisBetween(a, b) !== this.hwAxis(a));
+    if (rb === 3 && ra < 3) return this.ramp[b] === 1 || (this.under[b] > 0 && this.axisBetween(a, b) !== this.hwAxis(b));
+    if (ra === 3 && rb === 3) {
+      if (this.ramp[a] || this.ramp[b]) return true;
+      const ax = this.axisBetween(a, b);
+      if (this.under[a] && ax !== this.hwAxis(a)) return false;
+      if (this.under[b] && ax !== this.hwAxis(b)) return false;
+    }
+    return true;
+  }
+  /** raise the deck over overpasses and ease it down the highway on either side */
+  ensureElev() {
+    if (this.elevVer === this.version.roads) return;
+    this.elevVer = this.version.roads;
+    this.elev.fill(0);
+    const H = 0.32, RAMP = 3;
+    const q: number[] = [];
+    for (let i = 0; i < N * N; i++) if (this.road[i] === 3 && this.under[i]) { this.elev[i] = H; q.push(i); }
+    for (let h = 0; h < q.length; h++) {
+      const i = q[h];
+      const e = this.elev[i] - H / RAMP;
+      if (e <= 0.001) continue;
+      const x = i % N, y = (i / N) | 0;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + DX[d], ny = y + DY[d];
+        if (!inMap(nx, ny)) continue;
+        const n = tileIdx(nx, ny);
+        if (this.road[n] !== 3 || this.ramp[n] || this.under[n] || !this.linked(i, n)) continue;
+        if (this.elev[n] < e - 1e-4) { this.elev[n] = e; q.push(n); }
+      }
+    }
+  }
+  /** number of roads a vehicle on tile i can drive on to */
+  degree(i: number): number {
+    if (!this.road[i]) return 0;
+    const x = i % N, y = (i / N) | 0;
+    let n = 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DX[d], ny = y + DY[d];
+      if (inMap(nx, ny) && this.linked(i, tileIdx(nx, ny))) n++;
+    }
+    return n;
+  }
   roadConn(x: number, y: number): number {
     let m = 0;
     for (let d = 0; d < 4; d++) {

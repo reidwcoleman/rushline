@@ -315,24 +315,27 @@ export class Fleet {
     for (const c of this.cars) c.n = 0;
     this.bus.n = 0; this.trainHead.n = 0; this.trainMid.n = 0; this.tramHead.n = 0; this.tramMid.n = 0; this.ferry.n = 0; this.cabin.n = 0; this.truck.n = 0; this.load.n = 0; this.loco.n = 0; this.wagon.n = 0; this.wload.n = 0;
     const tmpC = new THREE.Color();
+    const lift = { y: 0, pitch: 0 };
     for (const v of traffic.vehicles) {
       if (v.dead) continue;
       const tile = v.path[v.i];
-      const y = w.water[tile] ? 0.04 : 0.016;
+      let y = w.water[tile] ? 0.04 : 0.016;
+      let pitch = 0;
+      if (w.road[tile] === 3) { traffic.lift(v, lift); y += lift.y; pitch = lift.pitch; }
       if (v.kind === 0) {
         tmpC.set(v.color);
         const c = v.color;
         // paint colours are authored in sRGB; convert once for the linear pipeline
         tmpC.set(c);
-        this.putLin(this.cars[v.shape % 3], v.x, y, v.z, v.ang, tmpC);
+        this.putLin(this.cars[v.shape % 3], v.x, y, v.z, v.ang, tmpC, 1, pitch);
       } else if (v.carrier && v.carrier.line.kind === 'truck') {
         tmpC.set(v.color);
-        this.putLin(this.truck, v.x, y, v.z, v.ang, tmpC);
+        this.putLin(this.truck, v.x, y, v.z, v.ang, tmpC, 1, pitch);
         const ld = v.carrier.load;
-        if (ld && ld.qty > 0.5) { tmpC.set(CARGO_INFO[CARGO_LIST[ld.type]].color); this.putLin(this.load, v.x, y, v.z, v.ang, tmpC, Math.min(1, 0.45 + ld.qty / v.carrier.cap * 0.55)); }
+        if (ld && ld.qty > 0.5) { tmpC.set(CARGO_INFO[CARGO_LIST[ld.type]].color); this.putLin(this.load, v.x, y, v.z, v.ang, tmpC, Math.min(1, 0.45 + ld.qty / v.carrier.cap * 0.55), pitch); }
       } else {
         tmpC.set(v.color);
-        this.putLin(this.bus, v.x, y, v.z, v.ang, tmpC);
+        this.putLin(this.bus, v.x, y, v.z, v.ang, tmpC, 1, pitch);
       }
     }
     for (const t of accidents) {
@@ -414,10 +417,10 @@ export class Fleet {
     }
   }
 
-  private putLin(p: FPool, x: number, y: number, z: number, ang: number, c: THREE.Color, sy = 1) {
+  private putLin(p: FPool, x: number, y: number, z: number, ang: number, c: THREE.Color, sy = 1, pitch = 0) {
     if (p.n >= p.cap) return;
     tmpObj.position.set(x, y, z);
-    tmpObj.rotation.set(0, -ang, 0);
+    tmpObj.rotation.set(0, -ang, pitch);
     tmpObj.scale.set(1, sy, 1);
     tmpObj.updateMatrix();
     p.mesh.setMatrixAt(p.n, tmpObj.matrix);

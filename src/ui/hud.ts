@@ -8,18 +8,18 @@ import { DAY, hourOf, dayOf } from '../sim/types.ts';
 import { wx, wz, DS, DN } from '../sim/world.ts';
 import { MODES, MODE_ORDER, CARGO_ORDER, type Mode } from '../sim/modes.ts';
 import type { App } from './app.ts';
-import type { ToolId } from './tools.ts';
+import { isRoadTool, type ToolId, type JMode } from './tools.ts';
 import type { OverlayMode } from '../render/view.ts';
 
 const TOOLS: { id: ToolId; icon: string; label: string; sub: string; key: string }[] = [
   { id: 'inspect', icon: 'inspect', label: 'Inspect', sub: 'Click anything to see how it is doing', key: '1' },
-  { id: 'road', icon: 'road', label: 'Road', sub: `Drag to build · ${money(COST.street)} a tile`, key: '2' },
-  { id: 'avenue', icon: 'avenue', label: 'Avenue', sub: `Twice the lanes · ${money(COST.avenue)} a tile`, key: '3' },
+  { id: 'road', icon: 'road', label: 'Roads', sub: `Streets, avenues and highways · drag to build`, key: '2' },
   { id: 'transit', icon: 'bus', label: 'Transit line', sub: 'Bus, tram, metro, ferry, gondola, freight', key: '4' },
   { id: 'park', icon: 'park', label: 'Park', sub: `Calms the neighbourhood · ${money(COST.park)}`, key: '5' },
   { id: 'arena', icon: 'arena', label: 'Arena', sub: `Match days pack the roads · ${money(COST.arena)}`, key: '6' },
   { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '7' },
   { id: 'service', icon: 'school', label: 'Services', sub: 'Schools, clinics, airport', key: '8' },
+  { id: 'junction', icon: 'junction', label: 'Junctions', sub: 'Roundabouts, signals, highway interchanges', key: '0' },
 ];
 
 export class Hud {
@@ -91,7 +91,7 @@ export class Hud {
     // ---------- toolbar
     const tb = h('div', { class: 'toolbar glass' });
     for (const t of TOOLS) {
-      const b = h('button', { class: 'tool', onClick: () => this.app.tools.select(t.id) },
+      const b = h('button', { class: 'tool', onClick: () => { const tl = this.app.tools; if (t.id === 'road') tl.select(isRoadTool(tl.tool) ? 'inspect' : tl.lastRoad); else tl.select(t.id); } },
         icon(t.icon),
         h('span', { class: 'key' }, t.key),
         h('span', { class: 'tip' }, t.label, h('small', {}, t.sub)));
@@ -168,8 +168,15 @@ export class Hud {
   refreshToolStates() {
     const g = this.app.game;
     for (const [id, b] of this.toolBtns) {
-      b.classList.toggle('on', this.app.tools.tool === id);
-      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'arena' && !g.unlocked.arena) || (id === 'service' && !g.unlocked.school && !g.unlocked.airport));
+      b.classList.toggle('on', this.app.tools.tool === id || (id === 'road' && isRoadTool(this.app.tools.tool)));
+      b.classList.toggle('lock', (id === 'junction' && !g.unlocked.junction) || (id === 'arena' && !g.unlocked.arena) || (id === 'service' && !g.unlocked.school && !g.unlocked.airport));
+    }
+    // the roads button wears the icon of the road type in hand
+    const rb = this.toolBtns.get('road');
+    const rt = isRoadTool(this.app.tools.tool) ? this.app.tools.tool : 'road';
+    if (rb && (rb as any)._rt !== rt) {
+      (rb as any)._rt = rt;
+      rb.replaceChild(icon(rt === 'highway' ? 'highway' : rt === 'avenue' ? 'avenue' : 'road'), rb.querySelector('svg')!);
     }
     // the transit button wears the icon of the mode in hand
     const tb = this.toolBtns.get('transit');
@@ -245,7 +252,7 @@ export class Hud {
     const t = this.app.tools, g = this.app.game;
     let key: string = t.tool;
     const d = t.draft;
-    const sig = `${t.tool}|${t.mode}|${t.group}|${g.unlocked.truck}${g.unlocked.freight}|${t.service}|${g.unlocked.school}${g.unlocked.clinic}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
+    const sig = `${t.tool}|${t.jmode}|${g.unlocked.avenue}${g.unlocked.highway}${g.unlocked.junction}|${t.mode}|${t.group}|${g.unlocked.truck}${g.unlocked.freight}|${t.service}|${g.unlocked.school}${g.unlocked.clinic}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
     if (!force && sig === this.ctxSig && this.context) return;
     this.ctxSig = sig;
     let node: HTMLElement | null = null;
@@ -296,11 +303,50 @@ export class Hud {
         h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: t.service === 'school' ? '#f2b84b' : t.service === 'clinic' ? '#3aa7a0' : '#7cc4ff' } }),
           h('div', { class: 't' }, h('b', {}, `${sd.label} · ${money(sd.cost)}`), h('span', {}, t.service === 'airport' ? `${sd.tag} Click where the top-left corner should go.` : `${sd.tag} Click empty ground beside a road.`)),
           h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
+    } else if (isRoadTool(t.tool)) {
+      key += 'road' + t.tool;
+      const row = h('div', { class: 'mode-row' });
+      const kinds: { id: 'road' | 'avenue' | 'highway'; label: string; cost: number; open: boolean; color: string; need: number }[] = [
+        { id: 'road', label: 'Street', cost: COST.street, open: true, color: '#cdd3dc', need: 0 },
+        { id: 'avenue', label: 'Avenue', cost: COST.avenue, open: g.unlocked.avenue, color: '#f2b84b', need: UNLOCK.avenue },
+        { id: 'highway', label: 'Highway', cost: COST.highway, open: g.unlocked.highway, color: '#34c58a', need: UNLOCK.highway },
+      ];
+      for (const k of kinds) {
+        const chip = h('button', { class: 'mchip' + (t.tool === k.id ? ' on' : '') + (k.open ? '' : ' lock'), onClick: () => t.setRoadType(k.id) }, icon(k.open ? (k.id === 'road' ? 'road' : k.id) : 'lock'), h('span', {}, k.label), k.open ? h('small', {}, money(k.cost)) : h('small', {}, String(k.need)));
+        chip.style.setProperty('--mc', k.color);
+        row.append(chip);
+      }
+      const tips: Record<string, string> = {
+        road: 'Drag across the map. Streets give homes and shops their frontage.',
+        avenue: 'Drag over streets to widen them, or over open ground to lay new avenues.',
+        highway: `Fast, no frontage. Drag across a road to make an interchange; both ends get ramps if a street is beside them. Cross-roads need a junction (key 0) or an interchange. Bridges ${money(COST.highwayBridge)}.`,
+      };
+      node = h('div', { class: 'context glass tcontext' }, row,
+        h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: t.tool === 'highway' ? '#34c58a' : t.tool === 'avenue' ? '#f2b84b' : '#cdd3dc' } }),
+          h('div', { class: 't' }, h('b', {}, t.tool === 'highway' ? 'Highway' : t.tool === 'avenue' ? 'Avenue' : 'Street'), h('span', {}, tips[t.tool])),
+          h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
+    } else if (t.tool === 'junction') {
+      key += 'jct' + t.jmode;
+      const row = h('div', { class: 'mode-row' });
+      const jopts: { id: JMode; label: string; ic: string; cost: number; color: string; tag: string }[] = [
+        { id: 'roundabout', label: 'Roundabout', ic: 'roundabout', cost: COST.roundabout, color: '#7cc4ff', tag: 'Traffic circles an island and never stops for a light. Best on busy crossings of equal roads.' },
+        { id: 'signals', label: 'Signals', ic: 'signal', cost: COST.signal, color: '#f2b84b', tag: 'Lights give each road a turn. Good for avenues crossing avenues, slow on quiet streets.' },
+        { id: 'ramp', label: 'Interchange', ic: 'ramp', cost: COST.ramp, color: '#34c58a', tag: 'Joins a highway tile to the streets beside it. Highways are sealed off without one.' },
+        { id: 'plain', label: 'Plain', ic: 'plain', cost: 0, color: '#cdd3dc', tag: 'Take the signals or roundabout off a junction.' },
+      ];
+      for (const k of jopts) {
+        const chip = h('button', { class: 'mchip' + (t.jmode === k.id ? ' on' : ''), onClick: () => t.setJMode(k.id) }, icon(k.ic), h('span', {}, k.label), h('small', {}, k.cost ? money(k.cost) : 'free'));
+        chip.style.setProperty('--mc', k.color);
+        row.append(chip);
+      }
+      const jo = jopts.find((x) => x.id === t.jmode)!;
+      node = h('div', { class: 'context glass tcontext' }, row,
+        h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: jo.color } }),
+          h('div', { class: 't' }, h('b', {}, `${jo.label}${jo.cost ? ' · ' + money(jo.cost) : ''}`), h('span', {}, `${jo.tag} Click a highlighted tile.`)),
+          h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
     } else if (t.tool !== 'inspect') {
       const def = TOOLS.find((x) => x.id === t.tool)!;
       const tips: Record<string, string> = {
-        road: 'Drag across the map. Right-click to stop building.',
-        avenue: 'Drag over streets to widen them, or over open ground to lay new avenues.',
         park: 'Click or drag over empty ground. Parks raise land value nearby.',
         arena: 'Click empty ground beside a road. The city holds a match every few days.',
         bulldoze: 'Click or drag over buildings, roads and stops to clear them.',

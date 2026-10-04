@@ -117,8 +117,8 @@ export class City {
       const nx = b.x + DX[d], ny = b.y + DY[d];
       if (!inMap(nx, ny)) continue;
       const t = tileIdx(nx, ny);
-      if (w.road[t]) all.push(t);
-      if (w.road[t] && (w.road[t] > bk || best < 0)) { best = t; bd = d; bk = w.road[t]; }
+      if (w.surf(t)) all.push(t);
+      if (w.surf(t) && (w.road[t] > bk || best < 0)) { best = t; bd = d; bk = w.road[t]; }
     }
     return { tile: best, dir: bd, all };
   }
@@ -195,7 +195,7 @@ export class City {
       const nx = tileX(t) + DX[d], ny = tileY(t) + DY[d];
       if (!inMap(nx, ny)) continue;
       const n = tileIdx(nx, ny);
-      if (!set.has(n) && w.road[n] && !all.includes(n)) all.push(n);
+      if (!set.has(n) && w.surf(n) && !all.includes(n)) all.push(n);
     }
     return { tile: all.length ? all[0] : -1, all };
   }
@@ -976,7 +976,7 @@ export class City {
       let ok = false;
       for (let d = 0; d < 4; d++) {
         const nx = x + DX[d], ny = y + DY[d];
-        if (inMap(nx, ny) && w.road[tileIdx(nx, ny)]) { ok = true; break; }
+        if (inMap(nx, ny) && w.surf(tileIdx(nx, ny))) { ok = true; break; }
       }
       if (ok) c.push(i);
     }
@@ -1013,7 +1013,10 @@ export class City {
         if (bid >= 0 && this.buildings.get(bid)?.kind === 'ind') indNear++;
       }
     }
-    const lv = 0.28 + 0.34 * (1 - w.centre[b.tile]) + 0.3 * cov + 0.13 * park - 0.2 * load - Math.min(0.2, indNear * 0.04) + (b.happy - 0.6) * 0.12;
+    // a highway next door is loud
+    let hw = 0;
+    for (let yy = Math.max(0, b.y - 2); yy <= Math.min(N - 1, b.y + 2); yy++) for (let xx = Math.max(0, b.x - 2); xx <= Math.min(N - 1, b.x + 2); xx++) if (w.road[tileIdx(xx, yy)] === 3) hw += 1 / (1 + Math.hypot(xx - b.x, yy - b.y));
+    const lv = 0.28 + 0.34 * (1 - w.centre[b.tile]) + 0.3 * cov + 0.13 * park - 0.2 * load - Math.min(0.2, indNear * 0.04) - Math.min(0.18, hw * 0.05) + (b.happy - 0.6) * 0.12;
     b.land = clamp(lv);
     return b.land;
   }
@@ -1161,7 +1164,7 @@ export class City {
       let nb = 0, rd = 0;
       for (let d = 0; d < 4; d++) {
         const nx = x + DX[d], ny = y + DY[d];
-        if (inMap(nx, ny)) { if (w.road[tileIdx(nx, ny)]) rd += w.road[tileIdx(nx, ny)]; if (w.bld[tileIdx(nx, ny)] >= 0) nb++; }
+        if (inMap(nx, ny)) { if (w.surf(tileIdx(nx, ny))) rd += w.road[tileIdx(nx, ny)]; if (w.bld[tileIdx(nx, ny)] >= 0) nb++; }
       }
       const c = w.centre[i], ind = w.industrial[i];
       let f: number;

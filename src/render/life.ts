@@ -151,7 +151,7 @@ export class Life {
     if (this.roadVer !== w.version.roads) {
       this.roadVer = w.version.roads;
       this.roadTiles = [];
-      for (let i = 0; i < N * N; i++) if (w.road[i] && !w.water[i]) this.roadTiles.push(i);
+      for (let i = 0; i < N * N; i++) if (w.surf(i) && !w.water[i]) this.roadTiles.push(i);
     }
     if (!this.roadTiles.length) return null;
     for (let k = 0; k < 12; k++) {
@@ -172,12 +172,12 @@ export class Life {
     if (this.walkers.length > this.walkWant) this.walkers.length = this.walkWant;
     let n = 0;
     for (const s of this.walkers) {
-      if (!w.road[s.tile]) { const r = this.spawnWalker(); if (r) Object.assign(s, r); continue; }
+      if (!w.surf(s.tile)) { const r = this.spawnWalker(); if (r) Object.assign(s, r); continue; }
       s.u += s.dir * s.speed * dt;
       if (Math.abs(s.u) > 0.5) {
         const x = tileX(s.tile) + (s.axis === 0 ? s.dir : 0), y = tileY(s.tile) + (s.axis === 1 ? s.dir : 0);
         const nt = inMap(x, y) ? tileIdx(x, y) : -1;
-        if (nt >= 0 && w.road[nt] && !w.water[nt]) { s.tile = nt; s.u -= s.dir; }
+        if (nt >= 0 && w.surf(nt) && !w.water[nt]) { s.tile = nt; s.u -= s.dir; }
         else { s.dir = -s.dir; s.u = s.dir > 0 ? -0.49 : 0.49; }
       }
       const cx = wx(tileX(s.tile)), cz = wz(tileY(s.tile));

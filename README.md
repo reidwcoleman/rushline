@@ -7,7 +7,8 @@ Everything you see is generated in code: terrain, water, buildings, vehicles, pe
 ## Play
 
 - Drag with the right mouse button to pan, scroll to zoom, `Q`/`E` to rotate, `R`/`F` to tilt.
-- Tools `1`-`8`: inspect, road, avenue, transit line, park, arena, bulldoze, services (schools, clinics, airport).
+- Tools `1`-`9` and `0`: inspect, street (`2`), avenue (`3`), transit line, park, arena, bulldoze, services (schools, clinics, airport), highway (`9`), junctions (`0`).
+- **Roads**: streets and avenues give homes and shops their frontage. **Highways** (800 residents) are fast and sealed off: no buildings face them, and a highway only joins the streets at an **interchange**. Drag one across town and every street it crosses straight on goes under it on an overpass, with the deck rising on ramps either side; a street that ends at it, or a bend, becomes an interchange. Draw a street across a highway and it runs under. The junction tool (`0`, 150 residents) lights up every crossing it can change: **roundabouts** (cars circle the island and never wait for a light), **traffic signals** (actuated: a road keeps green while cars arrive, then gives way) and **interchanges** (turn an overpass or a highway tile beside a street into on and off ramps). Junctions without control have the most accidents. A highway beside homes lowers their land value.
 - Transit (`4`, then People or Freight, then pick a vehicle with the chips, `4` again or `[` `]` to cycle):
   - **Bus** - cheap, uses the road, gets stuck in traffic.
   - **Tram** - rails in the road median, never stuck in traffic. Streets on its route become avenues. 150 residents.
@@ -43,11 +44,13 @@ node --experimental-transform-types tools/modetest.ts 8 2   # builds one of each
 node --experimental-transform-types tools/citizens.ts 3 3 5 # needs, moods, households and the town feed over a few days
 node --experimental-transform-types tools/freighttest.ts 3 3 # builds freight lines between the starting industries
 node --experimental-transform-types tools/roundtrip.ts 4    # save and restore of citizens, industries, airport and finance
+node --experimental-transform-types tools/roadtest.ts 4 top-rab   # highway, overpasses, signals and roundabouts: routing, driving, save and load
+node tools/roadui.mjs                               # the road tools with real keys and mouse drags
 node tools/fps.mjs                                  # frame rate per quality level
 ```
 
 ## How it is built
 
-- `src/sim` is plain TypeScript with no rendering: map and terrain, car-following traffic with junction yielding, seven vehicle types (one table in `modes.ts`), the multimodal trip planner with walking transfers, the advisor, citizens (`people.ts`: names, traits, needs, careers, households, aging) and their daily schedules, industry and cargo (`industry.ts`), vehicle wear and breakdowns, company books, loans, research and contracts, growth and upgrades, economy, stability, events.
+- `src/sim` is plain TypeScript with no rendering: map and terrain, car-following traffic with junction yielding, signals, roundabouts and grade-separated highways (an overpass is a straight-through jump in the router), seven vehicle types (one table in `modes.ts`), the multimodal trip planner with walking transfers, the advisor, citizens (`people.ts`: names, traits, needs, careers, households, aging) and their daily schedules, industry and cargo (`industry.ts`), vehicle wear and breakdowns, company books, loans, research and contracts, growth and upgrades, economy, stability, events.
 - `src/render` is three.js (citizens, planes, trucks and trains included): procedural buildings drawn as instanced meshes with a window shader, a rounded-junction road mesh, viaducts, tram rails, piers, cable car pylons and stations, water and sky shaders, image-based lighting from the live sky, a day/night cycle, depth AO and tilt-shift in the post chain.
 - `src/ui` is the HUD, tools and panels, written with plain DOM.

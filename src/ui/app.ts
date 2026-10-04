@@ -75,7 +75,7 @@ export class App {
     g.on('toast', (t: any) => this.toast(t.msg, t.tone));
     g.on('sfx', (k: string) => this.sound.sfx(k));
     g.on('milestone', (goal: any) => { this.hud.celebrate(goal.title, `${fmt(goal.pop)} residents · +${money(goal.reward)}`); this.sound.sfx('milestone'); });
-    g.on('unlock', (k: string) => { this.hud.refreshTools(); if (k === 'avenue' || k === 'metro' || k === 'policies') this.sound.sfx('unlock'); });
+    g.on('unlock', (k: string) => { this.hud.refreshTools(); if (k === 'avenue' || k === 'metro' || k === 'policies' || k === 'highway' || k === 'junction') this.sound.sfx('unlock'); });
     g.on('gameOver', (info: any) => this.showGameOver(info));
     g.on('dayEnd', () => this.autosave());
     g.on('bldRemove', () => this.panels.sync());
@@ -269,7 +269,7 @@ export class App {
           h('kbd', {}, 'Right-drag'), h('span', {}, 'Pan the map'),
           h('kbd', {}, 'Scroll'), h('span', {}, 'Zoom to the cursor'),
           h('kbd', {}, 'Q E'), h('span', {}, 'Rotate · R F tilt'),
-          h('kbd', {}, '1–8'), h('span', {}, 'Choose a tool · 4 again or [ ] swaps the vehicle type · 8 schools and clinics'),
+          h('kbd', {}, '1–9 0'), h('span', {}, 'Choose a tool · 2 3 9 street, avenue, highway · 4 again or [ ] swaps the vehicle type · 8 services · 0 junctions'),
           h('kbd', {}, 'Enter'), h('span', {}, 'Finish a line'),
           h('kbd', {}, 'G T H'), h('span', {}, 'Traffic, transit, mood views'),
           h('kbd', {}, 'C B L P'), h('span', {}, 'Citizens, company books, lines, policies'),

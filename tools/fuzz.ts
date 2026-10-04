@@ -10,7 +10,7 @@ const gentle = process.argv[4] === 'gentle';
 const g = new Game(seed);
 const w = g.world;
 g.money = 1e7;
-for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight', 'school', 'clinic', 'airport'] as const) g.unlocked[k] = true;
+for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight', 'school', 'clinic', 'airport', 'highway', 'junction'] as const) g.unlocked[k] = true;
 const R = () => g.rand();
 let ops = 0;
 function randTile() { return Math.floor(R() * N * N); }
@@ -41,8 +41,10 @@ function act() {
     const t = randTile(); const x = t % N, y = (t / N) | 0; const d = (R() * 4) | 0; const len = 2 + ((R() * 8) | 0);
     const tiles: number[] = [];
     for (let k = 0; k < len; k++) { const nx = x + DX[d] * k, ny = y + DY[d] * k; if (!inMap(nx, ny)) break; tiles.push(tileIdx(nx, ny)); }
-    g.buildRoad(tiles, R() < 0.2 ? 2 : 1);
-  } else if (r < 0.36) g.bulldoze(randTile());
+    const rr = R();
+    g.buildRoad(tiles, rr < 0.12 ? 3 : rr < 0.3 ? 2 : 1);
+  } else if (r < 0.31) { const t = randRoad(); if (t >= 0) g.setJunction(t, ([0, 1, 2, 'ramp'] as const)[(R() * 4) | 0]); }
+  else if (r < 0.36) g.bulldoze(randTile());
   else if (r < 0.41) g.bulldoze(randRoad() >= 0 ? randRoad() : 0);
   else if (r < 0.48) { for (const d of w.districts) if (!d.unlocked) { g.unlockDistrict(d.index); break; } }
   else if (r < 0.58) { const a = randRoad(), b = randRoad(), c = randRoad(); if (a >= 0 && b >= 0 && c >= 0) g.createBusLine([a, b, c].filter((v, i, arr) => arr.indexOf(v) === i)); }
@@ -63,6 +65,21 @@ function check() {
     if (!isFinite(v.x) || !isFinite(v.z) || !isFinite(v.ang)) throw new Error('NaN vehicle ' + v.id);
     if (v.i < 0 || v.i >= v.path.length) throw new Error('bad path index');
     if (!w.road[v.path[v.i]] && !v.dead) throw new Error(`vehicle ${v.id} on a non-road tile ${v.path[v.i]}`);
+  }
+  for (let i = 0; i < N * N; i++) {
+    if (w.under[i] && (w.road[i] !== 3 || w.ramp[i])) throw new Error('overpass flags on a tile that is not a plain highway ' + i);
+    if (w.ramp[i] && w.road[i] !== 3) throw new Error('interchange on a non-highway ' + i);
+    if (w.ctl[i] && !w.surf(i)) throw new Error('junction control on a non-street ' + i);
+    if (!w.road[i] && (w.under[i] || w.ramp[i] || w.ctl[i])) throw new Error('leftover flags on an empty tile ' + i);
+  }
+  for (const v of g.traffic.vehicles) {
+    if (v.dead) continue;
+    for (let k = 1; k < v.path.length; k++) {
+      const a = v.path[k - 1], b = v.path[k];
+      if (Math.abs((a % N) - (b % N)) + Math.abs(((a / N) | 0) - ((b / N) | 0)) !== 1) throw new Error('vehicle path has a gap');
+      if (!w.under[a] && !w.under[b] && k > v.i && !w.linked(a, b)) throw new Error('vehicle plans to cross an unlinked pair');
+      if (w.under[b] && k + 1 < v.path.length && k > v.i && v.path[k + 1] - b !== b - a) throw new Error('vehicle turns on an overpass');
+    }
   }
   for (const [id, b] of g.city.buildings) { if (w.bld[b.tile] !== id) throw new Error('building map mismatch'); for (const t of b.foot) if (w.bld[t] !== id) throw new Error('footprint mismatch'); }
   for (const p of g.city.persons) if (!p.home || p.home.residents.indexOf(p) < 0) throw new Error('person not in home');
@@ -108,7 +125,7 @@ try {
     if (((g.t / dt) | 0) % 40 === 0) check();
   }
   check();
-  console.log(`ok seed ${seed}: ${ops} ops, day ${g.day}, pop ${g.pop}, lines ${g.transit.lines.length}, stops ${g.transit.stops.length}, ${(Date.now() - t0) / 1000}s`);
+  console.log(`ok seed ${seed}: ${ops} ops, day ${g.day}, pop ${g.pop}, lines ${g.transit.lines.length}, stops ${g.transit.stops.length}, hwy ${w.road.filter((r) => r === 3).length} over ${w.under.filter((u) => u).length} ramp ${w.ramp.filter((u) => u).length} rab ${w.ctl.filter((c) => c === 2).length} sig ${w.ctl.filter((c) => c === 1).length}, ${(Date.now() - t0) / 1000}s`);
 } catch (e) {
   console.log(`FAIL seed ${seed} at day ${g.day}: ${(e as Error).stack}`);
   process.exit(1);

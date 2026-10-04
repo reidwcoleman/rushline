@@ -197,7 +197,9 @@ export function advise(g: Game, dismissed: Set<string>): Advice[] {
   if (jam >= 0 && jl > 0.42) {
     const x = tileX(jam), y = tileY(jam);
     const focus = { x: wx(x), z: wz(y), dist: 20 };
-    if (w.road[jam] === 1 && g.unlocked.avenue) {
+    if (g.unlocked.junction && w.surf(jam) && w.degree(jam) >= 3 && !w.ctl[jam] && g.junctionCheck(jam, 2) === null && g.money >= COST.roundabout + 400) {
+      add({ id: 'jct' + jam, tone: 'warn', title: 'A junction is clogging', body: 'Cars from every side are fighting over one crossing. A roundabout keeps them moving without stopping.', cta: `Roundabout here · ${fmt$(COST.roundabout)}`, act: () => g.setJunction(jam, 2), focus });
+    } else if (w.road[jam] === 1 && g.unlocked.avenue) {
       // widen the street along its axis around the jam
       const horiz = (x > 0 && w.road[tileIdx(x - 1, y)] > 0) || (x < N - 1 && w.road[tileIdx(x + 1, y)] > 0);
       const tiles: number[] = [];

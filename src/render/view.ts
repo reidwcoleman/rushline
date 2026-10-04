@@ -19,6 +19,7 @@ import { ParksView } from './parks.ts';
 import { isRoadMode } from '../sim/modes.ts';
 import { CitizensView } from './citizens.ts';
 import { AirView } from './air.ts';
+import { SignalView } from './signals.ts';
 import type { Person } from '../sim/types.ts';
 
 export type OverlayMode = 'none' | 'traffic' | 'transit' | 'happy';
@@ -42,6 +43,7 @@ export class View {
   parks: ParksView;
   citizens: CitizensView;
   air: AirView;
+  signals: SignalView;
   /** the citizen the marker rides on, and whether the camera follows them */
   focusPerson: Person | null = null;
   follow = false;
@@ -101,6 +103,7 @@ export class View {
     this.parks = new ParksView(this.scene, game.world);
     this.citizens = new CitizensView(this.scene, game);
     this.air = new AirView(this.scene, game, this.fx);
+    this.signals = new SignalView(this.scene, game);
     this.citizens.buildingH = (b) => this.buildings.heightOf(b);
     this.citizens.carrierY = (p) => {
       const c = p.ride; if (!c) return 0.4;
@@ -216,6 +219,7 @@ export class View {
     this.wakes(dt);
     this.breakdownSmoke(dt);
     this.air.update(game.speed > 0 ? dt : 0);
+    this.signals.update();
     this.tgfx.updateCrowd(this.time);
     // smoke
     const gust = 0.6 + 0.4 * Math.sin(this.time * 0.13);
