@@ -3,6 +3,7 @@ import { h, icon, clear, money } from './dom.ts';
 import { MODES, MODE_ORDER, CARGO_ORDER, type Mode } from '../sim/modes.ts';
 import { researchCost, RESEARCH_DAYS, FARE_STEPS } from '../sim/game.ts';
 import { DAY } from '../sim/types.ts';
+import { ACHIEVEMENTS } from '../sim/achievements.ts';
 import type { Line } from '../sim/types.ts';
 import type { Panels } from './panels.ts';
 
@@ -190,11 +191,15 @@ export function companyPanel(P: Panels): Built {
           h('button', { class: 'btn sm primary', onClick: () => { const r = g.acceptContract(c.id); if (!r.ok) app.toast(r.msg ?? '', 'warn'); key = ''; upd(); } }, 'Accept')))));
     }
     if (!act.length && !off.length) body.append(h('div', { class: 'empty' }, g.bestPop < 250 ? 'Clients start calling at 250 residents.' : 'No offers right now. New ones arrive every day.'));
+    body.append(h('div', { class: 'k' }, `Achievements · ${g.achieved.size} of ${ACHIEVEMENTS.length}`));
+    const grid = h('div', { class: 'ach' });
+    for (const a of ACHIEVEMENTS) grid.append(h('div', { class: 'a' + (g.achieved.has(a.id) ? ' got' : ''), title: a.desc }, h('i'), h('span', {}, a.title)));
+    body.append(grid);
     if (past.length) body.append(h('div', { class: 'k' }, 'Recent'), ...past.slice(-4).reverse().map((c) => h('div', { class: 'lr' }, h('span', {}, c.title), h('b', { class: 'num ' + (c.state === 'done' ? 'up' : 'down') }, c.state === 'done' ? '+' + money(c.reward) : 'missed'))));
   };
 
   const upd = () => {
-    const k = `${tab}|${g.contracts.map((c) => c.id + c.state + Math.floor(c.progress / 4)).join(',')}|${g.bookHist.length}|${Math.floor(g.t / 4)}|${g.loan}|${g.maint}|${g.autoRenew}|${g.project ? g.project.mode : ''}|${g.research.bus}${g.research.tram}${g.research.metro}${g.research.ferry}${g.research.gondola}|${Math.floor(g.money / 400)}|${g.transit.lines.length}`;
+    const k = `${tab}|${g.achieved.size}|${g.contracts.map((c) => c.id + c.state + Math.floor(c.progress / 4)).join(',')}|${g.bookHist.length}|${Math.floor(g.t / 4)}|${g.loan}|${g.maint}|${g.autoRenew}|${g.project ? g.project.mode : ''}|${g.research.bus}${g.research.tram}${g.research.metro}${g.research.ferry}${g.research.gondola}|${Math.floor(g.money / 400)}|${g.transit.lines.length}`;
     if (k === key) return;
     key = k;
     clear(body);

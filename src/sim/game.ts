@@ -9,6 +9,7 @@ import { City, defaultPolicies, type Policies } from './city.ts';
 import { mulberry32, clamp, type Rng } from './util.ts';
 import { CITY_NAMES } from './names.ts';
 import { feel, moodOf, TRAITS } from './people.ts';
+import { ACHIEVEMENTS } from './achievements.ts';
 import { DAY, dayOf, hourOf, type Ctx, type Building, type Stop, type Line, type Person, type Household, type Carrier } from './types.ts';
 
 export const COST = {
@@ -87,6 +88,9 @@ export class Game {
   research: Record<Mode, number> = { bus: 0, tram: 0, metro: 0, ferry: 0, gondola: 0, truck: 0, freight: 0 };
   project: { mode: Mode; lvl: number; done: number; start: number } | null = null;
   breakdowns = 0;
+  achieved = new Set<string>();
+  everBorrowed = false;
+  private achT = 0;
   flightAt = new Map<number, number>();
   flights = 0;
   contracts: Contract[] = [];
@@ -348,7 +352,7 @@ export class Game {
     const room = this.loanLimit() - this.loan;
     if (room < 500) return { ok: false, msg: 'The bank will not lend you more right now.' };
     const a = Math.min(amount, room);
-    this.loan += a; this.money += a;
+    this.loan += a; this.money += a; this.everBorrowed = true;
     this.emit('sfx', 'unlock');
     return { ok: true, cost: a };
   }
@@ -481,6 +485,16 @@ export class Game {
     }
   }
 
+  private achieveTick() {
+    for (const a of ACHIEVEMENTS) {
+      if (this.achieved.has(a.id) || !a.test(this)) continue;
+      this.achieved.add(a.id);
+      this.toast(`Achievement: ${a.title}. ${a.desc}`, 'good');
+      this.emit('sfx', 'milestone');
+      this.emit('achievement', a);
+    }
+  }
+
   private contractTick() {
     for (const c of this.contracts) {
       if (c.state !== 'active') continue;
@@ -563,6 +577,8 @@ export class Game {
     if (s.pop > this.bestPop) this.bestPop = s.pop;
     this.contractTick();
     this.flightTick();
+    this.achT += 1;
+    if (this.achT >= 3) { this.achT = 0; this.achieveTick(); }
     this.updateUnlocks();
   }
 
@@ -1251,7 +1267,7 @@ export interface SaveData {
   policies: Policies; districts: number[]; roads: number[]; parks: number[];
   buildings: (number | string)[][]; stops: [number, number, string, number][]; people?: PersonSave[]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number; fare?: number }[];
   daysSurvived: number; dayIncome: number; peak: number; diff?: number;
-  fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number>; contracts?: Contract[]; done?: number };
+  fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number>; contracts?: Contract[]; done?: number; ach?: string[]; borrowed?: boolean };
 }
 
 export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number }
@@ -1279,7 +1295,7 @@ export function serialize(g: Game): SaveData {
     v: 1, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
     policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, buildings, stops, lines, people,
     daysSurvived: g.daysSurvived, dayIncome: g.dayIncome, peak: g.peakTraffic, diff: g.diff,
-    fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research }, contracts: g.contracts.filter((c) => c.state === 'active' || c.state === 'offer'), done: g.contractsDone },
+    fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research }, contracts: g.contracts.filter((c) => c.state === 'active' || c.state === 'offer'), done: g.contractsDone, ach: [...g.achieved], borrowed: g.everBorrowed },
   };
 }
 
@@ -1334,7 +1350,7 @@ export function restore(d: SaveData): Game {
     for (const ps of d.people) { const p = byOld.get(ps.i); if (p) p.friends = ps.fr.map((f) => byOld.get(f)?.id).filter((x): x is number => x !== undefined); }
   }
   for (const p of g.city.persons) g.city.occupy(p);
-  if (d.fin) { g.loan = d.fin.loan; g.maint = d.fin.maint; g.autoRenew = d.fin.autoRenew; Object.assign(g.research, d.fin.research); g.contracts = (d.fin.contracts ?? []).map((c) => ({ ...c, last: 0 })); g.contractsDone = d.fin.done ?? 0; for (const c of g.contracts) if (c.state === 'active') c.last = 0; }
+  if (d.fin) { g.loan = d.fin.loan; g.maint = d.fin.maint; g.autoRenew = d.fin.autoRenew; Object.assign(g.research, d.fin.research); g.contracts = (d.fin.contracts ?? []).map((c) => ({ ...c, last: 0 })); g.contractsDone = d.fin.done ?? 0; g.achieved = new Set(d.fin.ach ?? []); g.everBorrowed = !!d.fin.borrowed; for (const c of g.contracts) if (c.state === 'active') c.last = 0; }
   for (const [tile, k, name, cap] of d.stops) { const s = g.transit.addStop(tile, SAVE_MODES[k] ?? 'bus', name); s.cap = cap; }
   for (const l of d.lines) {
     const line = g.transit.createLine(l.kind, l.tiles);

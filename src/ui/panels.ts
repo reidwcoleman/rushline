@@ -318,6 +318,14 @@ export class Panels {
         renewBtn,
         h('button', { class: 'btn sm', onClick: () => { const s = l0.stops[0]; this.app.view.rig.focus(s.x, s.z, 24); } }, 'Show'),
         h('button', { class: 'btn danger sm', onClick: () => { g.deleteLine(l0); this.app.tools.setSelection(null); this.app.toast(`${l0.name} removed.`, 'info'); } }, 'Delete')));
+    // the name is yours to change
+    const h3 = el.querySelector('h3');
+    if (h3) {
+      const inp = h('input', { class: 'rename', value: l0.name, maxlength: 26, spellcheck: 'false', title: 'Click to rename' }) as HTMLInputElement;
+      inp.addEventListener('change', () => { const v = inp.value.trim(); if (v) { l0.name = v; g.emit('linesChanged'); } else inp.value = l0.name; });
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') inp.blur(); });
+      h3.replaceWith(inp);
+    }
     upd();
     return { el, update: upd };
   }

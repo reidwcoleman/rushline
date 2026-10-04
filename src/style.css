@@ -431,3 +431,11 @@ button.chip:hover { background: var(--glass-3); }
 .tabs .tab { white-space: nowrap; }
 @media (max-width: 760px) { .side.wide { width: auto; } }
 @media (max-width: 760px) { .city .rush { display: none; } }
+input.rename { font: 700 18px/1.15 var(--serif); letter-spacing: -0.01em; color: var(--text); background: transparent; border: 0; border-bottom: 1px dashed transparent; padding: 0 0 2px; width: 100%; outline: none; user-select: text; -webkit-user-select: text; }
+input.rename:hover { border-bottom-color: var(--hair); }
+input.rename:focus { border-bottom-color: var(--amber); }
+.ach { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ach .a { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 9px; background: var(--glass-2); font-size: 12px; font-weight: 600; color: var(--text-3); }
+.ach .a i { width: 8px; height: 8px; border-radius: 4px; background: var(--glass-3); flex: none; }
+.ach .a.got { color: var(--text); background: var(--amber-soft); }
+.ach .a.got i { background: var(--amber); }
