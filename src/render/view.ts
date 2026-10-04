@@ -16,6 +16,9 @@ import { Overlay } from './overlay.ts';
 import { Particles, Rain } from './fx.ts';
 import { Life } from './life.ts';
 import { ParksView } from './parks.ts';
+import { isRoadMode } from '../sim/modes.ts';
+import { CitizensView } from './citizens.ts';
+import type { Person } from '../sim/types.ts';
 
 export type OverlayMode = 'none' | 'traffic' | 'transit' | 'happy';
 
@@ -36,6 +39,10 @@ export class View {
   rain: Rain;
   life: Life;
   parks: ParksView;
+  citizens: CitizensView;
+  /** the citizen the marker rides on, and whether the camera follows them */
+  focusPerson: Person | null = null;
+  follow = false;
   private parksDirty = false;
   time = 0;
   rainAmt = 0;
@@ -90,6 +97,12 @@ export class View {
     this.rain = new Rain(this.scene);
     this.life = new Life(this.scene, game.world);
     this.parks = new ParksView(this.scene, game.world);
+    this.citizens = new CitizensView(this.scene, game);
+    this.citizens.buildingH = (b) => this.buildings.heightOf(b);
+    this.citizens.carrierY = (p) => {
+      const c = p.ride; if (!c) return 0.4;
+      switch (c.line.kind) { case 'metro': return TRACK_Y + 0.42; case 'tram': return 0.44; case 'ferry': return 0.46; case 'gondola': return this.tgfx.cableY(c.line, c.d) + 0.12; default: return 0.46; }
+    };
     this.tgfx.clearance = (x, z) => {
       const tx = Math.floor(x + HALF), ty = Math.floor(z + HALF);
       if (tx < 0 || ty < 0 || tx >= N || ty >= N) return 0;
@@ -197,6 +210,7 @@ export class View {
     if (this.cableDirtyAt >= 0 && this.time - this.cableDirtyAt > 4) { this.cableDirtyAt = -1; if (game.transit.lines.some((l) => l.kind === 'gondola')) this.tgfx.rebuildCables(); }
     this.fleet.update(game.traffic, game.transit, this.accidents, (l, d) => this.tgfx.cableY(l, d), this.time);
     this.wakes(dt);
+    this.breakdownSmoke(dt);
     this.tgfx.updateCrowd(this.time);
     // smoke
     const gust = 0.6 + 0.4 * Math.sin(this.time * 0.13);
@@ -206,11 +220,20 @@ export class View {
     this.rain.update(dt, this.rig.target);
     this.life.update(dt, this.time);
     this.life.setNight(this.tod.night + this.rainAmt);
-    this.life.setWalkers(Math.min(300, Math.floor(game.pop / 9)) * (1 - Math.min(0.75, this.tod.night * 0.75 + this.rainAmt * 0.4)));
+    this.life.setWalkers(Math.min(90, Math.floor(game.pop / 30)) * (1 - Math.min(0.75, this.tod.night * 0.75 + this.rainAmt * 0.4)));
+    this.citizens.update(dt, this.time, this.focusPerson, Math.min(0.75, this.tod.night * 0.75 + this.rainAmt * 0.4));
+    if (this.focusPerson && this.focusPerson.dead) { this.focusPerson = null; this.follow = false; }
+    if (this.follow && this.focusPerson) {
+      const w = this.citizens.where(this.focusPerson);
+      const k = 1 - Math.exp(-dt * 4.5);
+      this.rig.gTarget.x += (w.x - this.rig.gTarget.x) * k;
+      this.rig.gTarget.z += (w.z - this.rig.gTarget.z) * k;
+    }
     // cursors, rings, routes
     this.overlay.setCursors(this.cursors);
     this.overlay.clearRings();
     for (const r of this.extraRings) this.overlay.addRing(r.x, r.z, r.r, r.color, r.alpha, r.fill, r.pulse);
+    if (this.focusPerson && !this.focusPerson.dead) { const w = this.citizens.where(this.focusPerson); this.overlay.addRing(w.x, w.z, w.inside ? 0.62 : 0.3, 0xffc54d, 0.9, 0.35, 1.6); }
     for (const s of game.transit.stops) {
       if (s.queue.length > s.cap * 0.85) {
         const sev = Math.min(1, s.queue.length / (s.cap * 1.4));
@@ -248,10 +271,10 @@ export class View {
     for (const line of tr.lines) {
       if (!this.showRoutes && line.id !== this.highlightLine) continue;
       const pts: { x: number; z: number }[] = [];
-      if (line.kind !== 'bus' && line.poly) {
+      if (!isRoadMode(line.kind) && line.poly) {
         for (let d = 0; d <= line.poly.length; d += 0.15) { const p = line.poly.at(d, 0); pts.push({ x: p.x, z: p.z }); }
-        const y = line.kind === 'metro' ? TRACK_Y + 0.05 : line.kind === 'tram' ? 0.07 : line.kind === 'ferry' ? WATER_LEVEL + 0.05 : 1.15;
-        this.overlay.setRoute('line:' + line.id, pts, y, line.color, line.kind === 'metro' ? 0.07 : 0.085, { dash: 1, alpha: 0.95 });
+        const y = line.kind === 'metro' || line.kind === 'freight' ? TRACK_Y + 0.05 : line.kind === 'tram' ? 0.07 : line.kind === 'ferry' ? WATER_LEVEL + 0.05 : 1.15;
+        this.overlay.setRoute('line:' + line.id, pts, y, line.color, line.kind === 'metro' || line.kind === 'freight' ? 0.07 : 0.085, { dash: 1, alpha: 0.95 });
       } else {
         for (let k = 0; k + 1 < line.stops.length; k++) {
           const path = router.find(line.stops[k].tile, line.stops[k + 1].tile);
@@ -259,6 +282,19 @@ export class View {
           for (const t of path) pts.push({ x: wx(tileX(t)), z: wz(tileY(t)) });
         }
         this.overlay.setRoute('line:' + line.id, pts, 0.06 + line.id * 0.001, line.color, 0.1, { dash: 1, alpha: 0.9 });
+      }
+    }
+  }
+
+  /** a plume over every vehicle that has broken down */
+  private breakdownSmoke(dt: number) {
+    if (this.game.speed === 0) return;
+    for (const line of this.game.transit.lines) {
+      for (const c of line.vehicles) {
+        if (c.broken <= 0) continue;
+        const p = this.game.transit.carrierPos(c);
+        const y = line.kind === 'metro' || line.kind === 'freight' ? TRACK_Y + 0.2 : line.kind === 'gondola' ? this.tgfx.cableY(line, c.d) - 0.1 : line.kind === 'ferry' ? 0.2 : 0.2;
+        this.fx.smoke('brk' + c.id, p.x, y, p.z, dt, this.wind);
       }
     }
   }

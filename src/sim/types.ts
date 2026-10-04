@@ -5,6 +5,20 @@ import type { Mode } from './modes.ts';
 
 export type Kind = 'res' | 'com' | 'ind';
 
+/** what a shop-type building actually is; decides what a visit does for a citizen */
+export type Venue = 'shop' | 'cafe' | 'diner' | 'cinema' | 'bar' | 'gym' | 'office' | 'mall' | 'arena' | 'school' | 'clinic';
+export type Special = 'arena' | 'school' | 'clinic' | 'farm' | 'quarry' | 'factory' | 'terminal';
+export type Cargo = 'food' | 'stone' | 'goods';
+export const CARGOS: Cargo[] = ['food', 'stone', 'goods'];
+export const cargoIdx = (c: Cargo) => CARGOS.indexOf(c);
+export interface Load { type: number; qty: number; fx: number; fz: number }
+export type Stage = 'child' | 'teen' | 'adult' | 'senior';
+export type TraitId = 'early' | 'night' | 'foodie' | 'home' | 'social' | 'driven' | 'green' | 'thrifty' | 'driver' | 'sporty' | 'grump' | 'sunny';
+export interface Needs { energy: number; hunger: number; fun: number; social: number; comfort: number }
+export interface LifeEntry { t: number; text: string }
+export interface Household { id: number; last: string; members: Person[]; home: Building }
+export interface WalkSeg { x0: number; z0: number; x1: number; z1: number; t0: number; dur: number; path: number[] | null; pi: number }
+
 export interface Building {
   id: number;
   x: number; y: number; tile: number;
@@ -24,7 +38,17 @@ export interface Building {
   lastLevel: number;      // sim time of last level change
   cutoff: number;         // seconds without road access
   glow: number;           // render hint
-  special?: 'arena';
+  special?: Special;
+  venue: Venue | null;    // what a commercial building is (shop, cafe, office ...)
+  name: string;           // venue / works name, '' for homes
+  guests: Person[];       // citizens currently inside as visitors
+  students: Person[];     // pupils (schools only)
+  park: number;           // 0..1 green space within reach (homes)
+  clinic: number;         // 0..1 nearest clinic cover (homes)
+  out: number[];          // cargo waiting to be hauled away [food, stone, goods]
+  stock: number[];        // cargo on hand [food, stone, goods]
+  eff: number;            // production multiplier that follows how well it is served
+  made: number; picked: number;   // today's output and how much was hauled
 }
 
 export type PState = 'home' | 'toWork' | 'work' | 'toHome' | 'toLeisure' | 'leisure' | 'toBack';
@@ -67,6 +91,28 @@ export interface Person {
   charged: boolean;       // paid the congestion charge on this trip
   at: Building | null;    // building the person is currently inside
   planTime: number;       // estimated total time of the chosen plan
+  // ---- the person behind the dot
+  first: string;
+  last: string;
+  age: number;
+  stage: Stage;
+  hh: Household;
+  traits: TraitId[];
+  needs: Needs;
+  mood: number;           // 0..1 from needs + traits
+  look: number;           // appearance seed
+  title: string;          // job title
+  wage: number;           // per working day
+  xp: number;             // working days at this career
+  wallet: number;
+  friends: number[];      // person ids
+  log: LifeEntry[];       // recent life events, newest last
+  ride: Carrier | null;   // vehicle they are on
+  car: Vehicle | null;    // their own car while driving
+  walk: WalkSeg | null;   // current walking leg, for drawing
+  student: boolean;
+  thought: string;
+  born: number;           // sim time they arrived or were born
 }
 
 export interface Stop {
@@ -100,6 +146,13 @@ export interface Carrier {
   off: number;            // lateral offset of the lane it currently uses
   age: number;
   wait: number;           // time spent held for spacing
+  born: number;           // sim time bought
+  cond: number;           // 0..1 mechanical condition
+  broken: number;         // seconds left broken down
+  lvl: number;            // model generation it was built as
+  earned: number;         // fares collected over its life
+  svc: boolean;           // just serviced, hold a moment
+  load: Load | null;      // freight on board
 }
 
 export interface Line {
@@ -124,6 +177,10 @@ export interface Line {
   segTime: number[];          // seconds between consecutive stops (live estimate)
   broken: boolean;            // bus cannot reach a stop
   lastFull: number;           // sim time a vehicle last left someone behind
+  fareMul: number;            // ticket price multiplier set by the player
+  dayRev: number; dayCost: number;       // today's takings and running costs
+  hist: { rev: number; cost: number }[]; // recent days
+  hauled: number;                        // freight units moved
 }
 
 export interface Vehicle {

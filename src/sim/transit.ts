@@ -1,15 +1,18 @@
 // Bus and metro: stops, lines, vehicles, boarding, and the multimodal trip planner.
 import { N, tileX, tileY, wx, wz } from './world.ts';
 import { TrackRouter, WaterRouter, Poly, smoothTilePath } from './path.ts';
+import { isSolidCode } from './modes.ts';
 import { MinHeap } from './util.ts';
-import { MODES, GONDOLA_MAX_HOP, type Mode } from './modes.ts';
-import { STOP_NAMES, STOP_SUFFIX_BUS, STOP_SUFFIX_METRO, STOP_SUFFIX_TRAM, STOP_SUFFIX_FERRY, STOP_SUFFIX_GONDOLA, LINE_COLORS } from './names.ts';
+import { MODES, GONDOLA_MAX_HOP, isRoadMode, isCargoMode, type Mode } from './modes.ts';
+import { CARGO_INFO, CARGO_LIST, room, isIndustry } from './industry.ts';
+import { DAY } from './types.ts';
+import { STOP_NAMES, STOP_SUFFIX_BUS, STOP_SUFFIX_METRO, STOP_SUFFIX_TRAM, STOP_SUFFIX_FERRY, STOP_SUFFIX_GONDOLA, STOP_SUFFIX_TRUCK, STOP_SUFFIX_FREIGHT, LINE_COLORS } from './names.ts';
 import type { Traffic } from './traffic.ts';
 import type { Ctx, Stop, Line, Carrier, Person, Leg, Vehicle, Building } from './types.ts';
 
 export const WALK_SPEED = 0.5;       // tiles per second
 export const TRANSFER_R = 2.3;       // people will walk this far between two stops to change vehicle
-const COVER_W: Record<Mode, number> = { bus: 0.7, tram: 0.85, metro: 1, ferry: 0.8, gondola: 0.85 };
+const COVER_W: Record<Mode, number> = { bus: 0.7, tram: 0.85, metro: 1, ferry: 0.8, gondola: 0.85, truck: 0, freight: 0 };
 export const walkR = (k: Mode) => MODES[k].walkR;
 
 export interface TransitHooks {
@@ -18,7 +21,21 @@ export interface TransitHooks {
   fare(amount: number, line: Line): void;
   toast(msg: string, tone: 'info' | 'warn' | 'bad' | 'good'): void;
   free(): boolean;
+  /** maintenance policy: 0 skimp, 1 standard, 2 thorough */
+  maint(): number;
+  /** research generation for a mode */
+  level(mode: Mode): number;
+  spend(amount: number, why: string): void;
+  breakdown(c: Carrier, x: number, z: number): void;
+  /** industries and shops within reach of a point */
+  sites(x: number, z: number): Building[];
+  cargoPay(amount: number, line: Line): void;
 }
+
+/** capacity, speed and reliability of the generation a vehicle was built as */
+export const genCap = (mode: Mode, lvl: number) => Math.round(MODES[mode].cap * (1 + 0.12 * lvl));
+export const genSpeed = (lvl: number) => 1 + 0.07 * lvl;
+export const genWear = (lvl: number) => 1 - 0.14 * lvl;
 
 interface GNode { line: Line; k: number; stop: Stop; wait: number }
 
@@ -56,7 +73,7 @@ export class Transit {
   // ---------------------------------------------------------------- stops
 
   private freshName(kind: Mode): string {
-    const sufs = { bus: STOP_SUFFIX_BUS, tram: STOP_SUFFIX_TRAM, metro: STOP_SUFFIX_METRO, ferry: STOP_SUFFIX_FERRY, gondola: STOP_SUFFIX_GONDOLA }[kind];
+    const sufs = { bus: STOP_SUFFIX_BUS, tram: STOP_SUFFIX_TRAM, metro: STOP_SUFFIX_METRO, ferry: STOP_SUFFIX_FERRY, gondola: STOP_SUFFIX_GONDOLA, truck: STOP_SUFFIX_TRUCK, freight: STOP_SUFFIX_FREIGHT }[kind];
     for (let k = 0; k < 80; k++) {
       const base = STOP_NAMES[Math.floor(this.ctx.rand() * STOP_NAMES.length)];
       const suf = sufs[Math.floor(this.ctx.rand() * sufs.length)];
@@ -134,7 +151,7 @@ export class Transit {
    * (its last tile is where the new section starts). Returned `tiles` start at the stop (or berth) of the first tile given.
    */
   planTrack(mode: Mode, stopTiles: number[], lineId: number, tail: number[] = []): { tiles: number[]; ok: boolean; reason?: string; stopIdx: number[] } {
-    if (mode === 'metro') return this.planMetro(stopTiles, lineId);
+    if (mode === 'metro' || mode === 'freight') return this.planMetro(stopTiles, lineId);
     const w = this.ctx.world;
     const full: number[] = [];
     const stopIdx: number[] = [];
@@ -184,12 +201,12 @@ export class Transit {
     return { tiles: full, ok: true, stopIdx };
   }
 
-  createBusLine(tiles: number[]): Line | null {
+  createBusLine(tiles: number[], kind: Mode = 'bus'): Line | null {
     if (tiles.length < 2) return null;
-    const stops = tiles.map((t) => this.addStop(t, 'bus'));
+    const stops = tiles.map((t) => this.addStop(t, kind));
     // routes must be drivable
     for (let k = 0; k + 1 < stops.length; k++) if (!this.traffic.router.find(stops[k].tile, stops[k + 1].tile)) return null;
-    const line = this.makeLine('bus', stops);
+    const line = this.makeLine(kind, stops);
     this.refreshSegTimes(line);
     this.addVehicle(line);
     this.ctx.emit('linesChanged');
@@ -199,7 +216,7 @@ export class Transit {
   createMetroLine(tiles: number[]): Line | null { return this.createLine('metro', tiles); }
 
   createLine(mode: Mode, tiles: number[]): Line | null {
-    if (mode === 'bus') return this.createBusLine(tiles);
+    if (isRoadMode(mode)) return this.createBusLine(tiles, mode);
     if (tiles.length < 2) return null;
     const id = this.nextLine;
     const plan = this.planTrack(mode, tiles, id);
@@ -216,6 +233,7 @@ export class Transit {
     const line: Line = {
       id: this.nextLine++, kind, name: '', color: this.nextColor(), stops, vehicles: [], tiles: [], stopIdx: [], poly: null, stopDist: [],
       boardings: 0, income: 0, riders: 0, deleted: false, created: this.ctx.t, loops: 0, segTime: [], broken: false, lastFull: -99,
+      fareMul: 1, dayRev: 0, dayCost: 0, hist: [], hauled: 0,
     };
     line.name = `${MODES[kind].label} ${line.id}`;
     for (const s of stops) if (!s.lines.includes(line)) s.lines.push(line);
@@ -240,7 +258,7 @@ export class Transit {
       line.poly = poly;
       line.stopDist = stopIdx.map((i) => tileDist[Math.min(i, tileDist.length - 1)]);
     }
-    if (line.kind === 'metro') for (const t of tiles) if (w.stopKind[t] !== 2) w.rail[t] = line.id + 1;
+    if (line.kind === 'metro' || line.kind === 'freight') for (const t of tiles) if (!isSolidCode(w.stopKind[t])) w.rail[t] = line.id + 1;
     line.segTime = [];
     for (let k = 0; k + 1 < line.stops.length; k++) line.segTime.push((line.stopDist[k + 1] - line.stopDist[k]) / (m.speed * 0.8) + 3 + m.dwell * 0.8);
     this.refreshBoat();
@@ -285,7 +303,7 @@ export class Transit {
   /** append a stop to the end of a bus line */
   extendBus(line: Line, tile: number): boolean {
     const last = line.stops[line.stops.length - 1];
-    const s = this.addStop(tile, 'bus');
+    const s = this.addStop(tile, line.kind);
     if (s === last || line.stops.includes(s)) return false;
     if (!this.traffic.router.find(last.tile, s.tile)) return false;
     line.stops.push(s);
@@ -304,7 +322,7 @@ export class Transit {
   }
 
   extendLine(line: Line, tile: number): { ok: boolean; reason?: string } {
-    if (line.kind === 'bus') return this.extendBus(line, tile) ? { ok: true } : { ok: false, reason: 'Those stops are not connected by road.' };
+    if (isRoadMode(line.kind)) return this.extendBus(line, tile) ? { ok: true } : { ok: false, reason: 'Those stops are not connected by road.' };
     const planRes = this.planExtension(line, tile);
     if (!planRes.ok) return planRes;
     if (planRes.tiles.length < 2) return { ok: false, reason: 'Too close to the last stop.' };
@@ -325,17 +343,18 @@ export class Transit {
 
   extendMetro(line: Line, tile: number) { return this.extendLine(line, tile); }
 
-  vehicleCost(line: Line) { return MODES[line.kind].vehCost; }
+  vehicleCost(line: Line) { return Math.round(MODES[line.kind].vehCost * (1 + 0.22 * this.hooks.level(line.kind))); }
   maxVehicles(line: Line) { return MODES[line.kind].maxVeh; }
 
   addVehicle(line: Line): Carrier | null {
     if (line.vehicles.length >= this.maxVehicles(line)) return null;
     const c: Carrier = {
-      id: this.nextCar++, line, dir: 1, target: 1, passengers: [], cap: MODES[line.kind].cap,
+      id: this.nextCar++, line, dir: 1, target: 1, passengers: [], cap: genCap(line.kind, this.hooks.level(line.kind)),
       state: 'run', dwell: 0, veh: null, d: 0, speed: 0, off: MODES[line.kind].lane, age: 0, wait: 0,
+      born: this.ctx.t, cond: 1, broken: 0, lvl: this.hooks.level(line.kind), earned: 0, svc: false, load: null,
     };
     const n = line.vehicles.length;
-    if (line.kind === 'bus') {
+    if (isRoadMode(line.kind)) {
       // stagger starts over the stops so they do not bunch up
       const startIdx = Math.min(line.stops.length - 2, Math.floor((n * line.stops.length) / Math.max(2, n + 1)) % Math.max(1, line.stops.length - 1));
       c.target = Math.min(line.stops.length - 1, startIdx + 1);
@@ -374,7 +393,7 @@ export class Transit {
   }
 
   private removeCarrier(c: Carrier) {
-    for (const p of c.passengers) this.hooks.strand(p);
+    for (const p of c.passengers) { p.ride = null; this.hooks.strand(p); }
     c.passengers.length = 0;
     if (c.veh) this.traffic.kill(c.veh);
     c.veh = null;
@@ -385,7 +404,7 @@ export class Transit {
   }
 
   refreshSegTimes(line: Line) {
-    if (line.kind !== 'bus') return;
+    if (!isRoadMode(line.kind)) return;
     const out = { cost: 0 };
     const seg: number[] = [];
     for (let k = 0; k + 1 < line.stops.length; k++) {
@@ -393,6 +412,14 @@ export class Transit {
       seg.push(p ? out.cost / 0.88 + 3.2 : 120);
     }
     line.segTime = seg;
+  }
+
+  /** where a vehicle is in the world right now */
+  carrierPos(c: Carrier, out: { x: number; z: number } = { x: 0, z: 0 }): { x: number; z: number } {
+    const line = c.line;
+    if (isRoadMode(line.kind)) { if (c.veh) { out.x = c.veh.x; out.z = c.veh.z; } else { const s = line.stops[0]; out.x = s.x; out.z = s.z; } return out; }
+    if (line.poly) { const q = line.poly.at(c.d, c.off); out.x = q.x; out.z = q.z; }
+    return out;
   }
 
   /** the real distance a boat/cable car must cover, for display */
@@ -420,7 +447,8 @@ export class Transit {
     const stop = line.stops[c.target];
     if (!stop) { this.traffic.kill(v); c.veh = null; return; }
     const moved = this.serve(c, stop);
-    v.dwell = 1.0 + 0.11 * moved;
+    v.dwell = 1.0 + 0.11 * moved + (c.svc ? 5 : 0);
+    c.svc = false;
     this.nextBusLeg(c, v, true);
   }
 
@@ -450,6 +478,7 @@ export class Transit {
   /** unload and load at a stop; returns people moved */
   serve(c: Carrier, stop: Stop): number {
     const line = c.line;
+    if (isCargoMode(line.kind)) return this.serveCargo(c, stop);
     const i = line.stops.indexOf(stop);
     const t = this.ctx.t;
     let moved = 0;
@@ -461,6 +490,7 @@ export class Transit {
       c.passengers.splice(k, 1);
       moved++;
       p.leg++;
+      p.ride = null;
       if (p.legs && p.leg < p.legs.length) {
         const nl = p.legs[p.leg];
         const ns = nl.line.stops[nl.from];
@@ -468,12 +498,15 @@ export class Transit {
           // walk to the next vehicle's stop nearby
           p.phase = 'walkIn'; p.stopRef = ns;
           p.timer = Math.hypot(ns.x - stop.x, ns.z - stop.z) / WALK_SPEED;
+          p.walk = { x0: stop.x, z0: stop.z, x1: ns.x, z1: ns.z, t0: t, dur: Math.max(1, p.timer), path: null, pi: 0 };
         } else {
-          p.phase = 'wait'; p.stopRef = stop; p.waitStart = t;
+          p.phase = 'wait'; p.stopRef = stop; p.waitStart = t; p.walk = null;
           stop.queue.push(p);
         }
       } else {
         p.phase = 'walkOut'; p.timer = p.walkOutT; p.stopRef = null;
+        const d = p.tripTo ?? p.home;
+        p.walk = { x0: stop.x, z0: stop.z, x1: wx(d.x), z1: wz(d.y), t0: t, dur: Math.max(1, p.walkOutT), path: null, pi: 0 };
       }
     }
     // outgoing direction after a possible turnaround
@@ -487,17 +520,103 @@ export class Transit {
       if (c.passengers.length >= c.cap) { denied++; continue; }
       q.splice(k, 1); k--;
       c.passengers.push(p);
-      p.phase = 'ride'; p.stopRef = null;
+      p.phase = 'ride'; p.stopRef = null; p.ride = c; p.walk = null;
       moved++;
-      const fare = this.hooks.free() ? 0 : MODES[line.kind].fare;
+      const fare = this.hooks.free() ? 0 : MODES[line.kind].fare * line.fareMul;
       line.boardings++;
       stop.boardings++;
-      if (fare > 0) { line.income += fare; this.hooks.fare(fare, line); }
+      if (fare > 0) { line.income += fare; line.dayRev += fare; c.earned += fare; this.hooks.fare(fare, line); }
     }
     if (denied > 0) line.lastFull = t;
     line.riders += (c.passengers.length - line.riders) * 0.05;
     c.dir = out as 1 | -1;
+    // vehicles are looked after at the end of the line
+    if ((i === 0 || i === line.stops.length - 1) && this.hooks.maint() >= 1 && c.cond < (this.hooks.maint() >= 2 ? 0.8 : 0.6)) this.service(c);
     return moved;
+  }
+
+  // ---------------------------------------------------------------- freight
+
+  /** unload what the stop's neighbours will take, then load whatever is waiting */
+  private serveCargo(c: Carrier, stop: Stop): number {
+    const line = c.line;
+    const sites = this.hooks.sites(stop.x, stop.z);
+    let moved = 0;
+    if (c.load && c.load.qty > 0.01) {
+      for (const site of sites) {
+        const idx = c.load.type;
+        const r = room(site, idx);
+        if (r <= 0.01) continue;
+        const q = Math.min(c.load.qty, r);
+        if (site.special !== 'terminal') site.stock[idx] += q;
+        const dist = Math.hypot(stop.x - c.load.fx, stop.z - c.load.fz);
+        const pay = q * CARGO_INFO[CARGO_LIST[idx]].rate * Math.max(1.5, dist) * (site.special === 'terminal' ? 1.25 : 1) * (1 + 0.05 * c.lvl);
+        line.income += pay; line.dayRev += pay; line.hauled += q; c.earned += pay;
+        this.hooks.cargoPay(pay, line);
+        c.load.qty -= q; moved += q;
+        if (c.load.qty <= 0.01) { c.load = null; break; }
+      }
+    }
+    if (!c.load || c.load.qty < c.cap - 0.5) {
+      for (const site of sites) {
+        if (!isIndustry(site.special)) continue;
+        for (let idx = 0; idx < 3; idx++) {
+          if (site.out[idx] < 0.8) continue;
+          if (c.load && c.load.type !== idx) continue;
+          const have = c.load ? c.load.qty : 0;
+          const q = Math.min(c.cap - have, site.out[idx]);
+          if (q <= 0.01) continue;
+          site.out[idx] -= q; site.picked += q;
+          if (!c.load) c.load = { type: idx, qty: 0, fx: stop.x, fz: stop.z };
+          else if (c.load.qty < 0.5) { c.load.fx = stop.x; c.load.fz = stop.z; }
+          c.load.qty += q; moved += q;
+        }
+      }
+    }
+    stop.boardings += moved > 0 ? 1 : 0;
+    if (moved > 0) line.boardings++;
+    line.riders += ((c.load?.qty ?? 0) - line.riders) * 0.05;
+    const out = line.stops.indexOf(stop) >= line.stops.length - 1 ? -1 : line.stops.indexOf(stop) <= 0 ? 1 : c.dir;
+    c.dir = out as 1 | -1;
+    const i = line.stops.indexOf(stop);
+    if ((i === 0 || i === line.stops.length - 1) && this.hooks.maint() >= 1 && c.cond < (this.hooks.maint() >= 2 ? 0.8 : 0.6)) this.service(c);
+    return Math.round(moved / 2);
+  }
+
+  // ---------------------------------------------------------------- condition
+
+  ageDays(c: Carrier) { return (this.ctx.t - c.born) / DAY; }
+  /** best condition a vehicle can reach: old ones never come back fully */
+  maxCond(c: Carrier) { return Math.max(0.35, Math.min(1, 1 - Math.max(0, this.ageDays(c) - MODES[c.line.kind].life) * 0.025)); }
+  serviceCost(c: Carrier) { return Math.round(MODES[c.line.kind].vehCost * 0.05 * (isRoadMode(c.line.kind) ? 1 : 1.2)); }
+
+  service(c: Carrier) {
+    const cost = this.serviceCost(c);
+    this.hooks.spend(cost, 'service');
+    c.line.dayCost += cost;
+    c.cond = this.maxCond(c) * (this.hooks.maint() >= 2 ? 1 : 0.96);
+    c.svc = true;
+  }
+
+  renew(c: Carrier) {
+    const lvl = this.hooks.level(c.line.kind);
+    c.born = this.ctx.t; c.cond = 1; c.lvl = lvl; c.cap = genCap(c.line.kind, lvl); c.broken = 0;
+  }
+
+  /** wear and breakdowns for one vehicle */
+  private wear(c: Carrier, dt: number, moving: boolean, x: number, z: number) {
+    if (c.broken > 0) { c.broken -= dt; if (c.broken <= 0) { c.broken = 0; c.cond = Math.min(this.maxCond(c), c.cond + 0.22); } return; }
+    const m = this.hooks.maint();
+    const rate = (m === 0 ? 1.5 : m === 2 ? 0.55 : 1) * genWear(c.lvl);
+    // roughly 20 days from new to worn out with standard upkeep
+    if (moving) c.cond = Math.max(0.05, c.cond - rate * dt / (DAY * 20));
+    const old = Math.max(0, this.ageDays(c) - MODES[c.line.kind].life) * 0.02;
+    if (!moving) return;
+    const hz = 0.0055 * Math.pow(Math.max(0, 1 - c.cond + old), 2.2);
+    if (hz > 0 && this.ctx.rand() < hz * dt) {
+      c.broken = 9 + this.ctx.rand() * 9;
+      this.hooks.breakdown(c, x, z);
+    }
   }
 
   // ---------------------------------------------------------------- trains + stops
@@ -506,20 +625,26 @@ export class Transit {
     const t = this.ctx.t;
     // trains
     for (const line of this.lines) {
-      if (line.kind === 'bus' || !line.poly) continue;
-      for (const c of line.vehicles) this.stepTrain(c, line, dt);
+      if (isRoadMode(line.kind) || !line.poly) continue;
+      for (const c of line.vehicles) {
+        this.stepTrain(c, line, dt);
+        if (c.state !== 'dwell' || c.broken > 0) { const q = line.poly.at(c.d, c.off); this.wear(c, dt, c.speed > 0.05 || c.broken > 0, q.x, q.z); }
+      }
     }
     // buses whose vehicle died (road removed) restart from the first stop
     for (const line of this.lines) {
-      if (line.kind !== 'bus') continue;
+      if (!isRoadMode(line.kind)) continue;
       for (const c of line.vehicles) {
         if (c.veh && c.veh.dead) {
-          for (const p of c.passengers) this.hooks.strand(p);
+          for (const p of c.passengers) { p.ride = null; this.hooks.strand(p); }
           c.passengers.length = 0;
           c.veh = null;
           c.state = 'run';
           c.dir = 1; c.target = 1;
           if (!this.startBusPath(c, line.stops[0].tile)) c.state = 'wait';
+        } else if (c.veh && !c.veh.dead) {
+          if (c.broken > 0) c.veh.dwell = Math.max(c.veh.dwell, c.broken);
+          this.wear(c, dt, c.veh.speed > 0.1 || c.broken > 0, c.veh.x, c.veh.z);
         } else if (!c.veh && line.stops.length > 1) {
           c.age += dt;
           if (c.age > 3) { c.age = 0; c.target = Math.min(c.target, line.stops.length - 1); this.startBusPath(c, line.stops[Math.max(0, c.target - c.dir)].tile); }
@@ -547,7 +672,7 @@ export class Transit {
     this.segTimer += dt;
     if (this.segTimer > 12) {
       this.segTimer = 0;
-      for (const l of this.lines) if (l.kind === 'bus') this.refreshSegTimes(l);
+      for (const l of this.lines) if (isRoadMode(l.kind)) this.refreshSegTimes(l);
     }
   }
 
@@ -555,6 +680,7 @@ export class Transit {
     c.age += dt;
     const m = MODES[line.kind];
     const dir = c.dir;
+    if (c.broken > 0) { c.speed = 0; c.state = 'dwell'; c.dwell = Math.max(c.dwell, 0.5); return; }
     if (c.state === 'dwell') {
       c.dwell -= dt;
       c.speed = 0;
@@ -571,7 +697,8 @@ export class Transit {
     const tgtD = line.stopDist[c.target];
     const left = (tgtD - c.d) * dir;
     // block spacing
-    let vlim = m.speed;
+    const gs = genSpeed(c.lvl);
+    let vlim = m.speed * gs;
     const gapMax = m.spacing;
     const gapMin = m.spacing * 0.37;
     for (const o of line.vehicles) {
@@ -595,7 +722,8 @@ export class Transit {
       const T = c.target;
       c.target = T + c.dir;
       c.state = 'dwell';
-      c.dwell = m.dwell + 0.07 * moved * (line.kind === 'gondola' ? 0.4 : 1);
+      c.dwell = m.dwell + 0.07 * moved * (line.kind === 'gondola' ? 0.4 : 1) + (c.svc ? 5 : 0);
+      c.svc = false;
       c.off = m.lane * c.dir;
       if (T <= 0 || T >= line.stops.length - 1) line.loops++;
     }
@@ -616,7 +744,7 @@ export class Transit {
     const nodes: GNode[] = [];
     const base = new Map<Line, number>();
     for (const l of this.lines) {
-      if (l.vehicles.length === 0 || l.broken || l.stops.length < 2) continue;
+      if (l.vehicles.length === 0 || l.broken || l.stops.length < 2 || isCargoMode(l.kind)) continue;
       const hw = this.headway(l);
       base.set(l, nodes.length);
       for (let k = 0; k < l.stops.length; k++) nodes.push({ line: l, k, stop: l.stops[k], wait: Math.min(100, hw * 0.5) });
@@ -624,7 +752,7 @@ export class Transit {
     const n = nodes.length;
     // stops close enough to walk between, so a bus can feed a metro without sharing a tile
     const near = new Map<Stop, Stop[]>();
-    const live = this.stops.filter((s) => s.lines.length);
+    const live = this.stops.filter((s) => s.lines.length && !isCargoMode(s.kind));
     for (const a of live) for (const b of live) {
       if (a === b || Math.hypot(a.x - b.x, a.z - b.z) > TRANSFER_R) continue;
       let arr = near.get(a);
@@ -663,7 +791,7 @@ export class Transit {
     const endWalk = new Map<Stop, number>();
     let any = false;
     for (const s of this.stops) {
-      if (!s.lines.length) continue;
+      if (!s.lines.length || isCargoMode(s.kind)) continue;
       const R = MODES[s.kind].walkR;
       const d0 = Math.hypot(s.x - ax, s.z - ay);
       if (d0 <= R) {
@@ -743,7 +871,7 @@ export class Transit {
     let best = 0;
     const cx = x + 0.5 - N / 2, cz = y + 0.5 - N / 2;
     for (const s of this.stops) {
-      if (!s.lines.length) continue;
+      if (!s.lines.length || isCargoMode(s.kind)) continue;
       const R = MODES[s.kind].walkR;
       const d = Math.hypot(s.x - cx, s.z - cz);
       if (d < R) {

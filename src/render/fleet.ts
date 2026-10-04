@@ -5,6 +5,7 @@ import type { Traffic } from '../sim/traffic.ts';
 import type { Transit } from '../sim/transit.ts';
 import { WATER_LEVEL, type World } from '../sim/world.ts';
 import type { Line } from '../sim/types.ts';
+import { CARGO_INFO, CARGO_LIST } from '../sim/industry.ts';
 
 export const TRACK_Y = 0.92;
 
@@ -186,6 +187,70 @@ function cabinGeo() {
   return b.geometry();
 }
 
+function truckGeo() {
+  const b = new MeshBuilder();
+  const L = 0.56, Wd = 0.16;
+  b.paintW = 1;
+  b.box(L / 2 - 0.09, 0.016, 0, 0.18, 0.11, Wd, WHITE);                          // cab in the line colour
+  b.paintW = 0;
+  b.box(L / 2 - 0.045, 0.07, 0, 0.09, 0.04, Wd * 0.94, GLASS);
+  b.box(L / 2 - 0.09, 0.126, 0, 0.17, 0.01, Wd * 0.96, SILVER);
+  b.box(-0.07, 0.03, 0, L - 0.2, 0.03, Wd * 0.96, lin(0x4a5058));                // chassis
+  b.box(-0.07, 0.06, 0, L - 0.22, 0.012, Wd, lin(0x8a6a48));                      // flatbed
+  for (const s of [-1, 1]) b.box(-0.07, 0.072, s * (Wd / 2 - 0.003), L - 0.22, 0.03, 0.006, lin(0x6c5238));
+  b.box(-L / 2 + 0.07, 0.072, 0, 0.006, 0.03, Wd, lin(0x6c5238));
+  for (const s of [-1, 1]) {
+    b.box(L / 2 - 0.004, 0.044, s * 0.052, 0.012, 0.016, 0.026, HEAD, { emit: 4.5 });
+    b.box(-L / 2 + 0.004, 0.05, s * 0.054, 0.012, 0.014, 0.026, TAIL, { emit: 2.5 });
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) wheel(b, sx * 0.19, sz * (Wd / 2 - 0.004), 0.028, 0.026);
+  wheel(b, 0.2, 0.065, 0.028, 0.026); wheel(b, 0.2, -0.065, 0.028, 0.026);
+  return b.geometry();
+}
+function loadGeo() {
+  const b = new MeshBuilder();
+  b.paintW = 1;
+  b.box(-0.07, 0.072, 0, 0.32, 0.075, 0.13, WHITE);
+  b.box(-0.07, 0.147, 0, 0.26, 0.018, 0.1, WHITE);
+  return b.geometry();
+}
+function locoGeo() {
+  const b = new MeshBuilder();
+  const L = 0.3, Wd = 0.17;
+  b.paintW = 0;
+  b.box(0, 0.0, 0, L, 0.1, Wd, lin(0x3b4048));
+  b.paintW = 1;
+  b.box(0, 0.0, 0, L + 0.003, 0.03, Wd + 0.003, WHITE);
+  b.box(-0.05, 0.1, 0, 0.18, 0.05, Wd * 0.9, WHITE);                                    // hood in the line colour
+  b.paintW = 0;
+  b.box(0.08, 0.1, 0, 0.1, 0.075, Wd * 0.94, lin(0xe9e6de));                            // cab
+  b.box(0.08, 0.125, 0, 0.1, 0.03, Wd * 0.96, GLASS, { emit: 0.5 });
+  b.box(0.08, 0.175, 0, 0.11, 0.01, Wd, lin(0x7d868f));
+  b.cyl(-0.12, 0.15, 0, 0.022, 0.02, 0.034, lin(0x2a2f36), 8);
+  for (const s of [-1, 1]) b.box(L / 2 + 0.002, 0.05, s * 0.055, 0.008, 0.02, 0.026, HEAD, { emit: 5 });
+  for (const sx of [-1, 1]) b.box(sx * 0.09, -0.03, 0, 0.08, 0.03, Wd * 0.7, lin(0x23272d));
+  return b.geometry();
+}
+function wagonGeo() {
+  const b = new MeshBuilder();
+  const L = 0.27, Wd = 0.17;
+  b.paintW = 0;
+  b.box(0, 0.0, 0, L, 0.035, Wd, lin(0x4a4038));
+  b.box(0, 0.035, 0, L, 0.05, 0.008, lin(0x5b4f45));
+  for (const s of [-1, 1]) b.box(0, 0.035, s * (Wd / 2 - 0.004), L, 0.05, 0.008, lin(0x5b4f45));
+  b.box(-L / 2 + 0.004, 0.035, 0, 0.008, 0.05, Wd, lin(0x5b4f45));
+  b.box(L / 2 - 0.004, 0.035, 0, 0.008, 0.05, Wd, lin(0x5b4f45));
+  for (const sx of [-1, 1]) b.box(sx * 0.085, -0.03, 0, 0.07, 0.03, Wd * 0.7, lin(0x23272d));
+  return b.geometry();
+}
+function wagonLoadGeo() {
+  const b = new MeshBuilder();
+  b.paintW = 1;
+  b.box(0, 0.04, 0, 0.23, 0.07, 0.14, WHITE);
+  b.box(0, 0.11, 0, 0.18, 0.015, 0.1, WHITE);
+  return b.geometry();
+}
+
 interface FPool { mesh: THREE.InstancedMesh; tint: THREE.InstancedBufferAttribute; n: number; cap: number }
 
 export class Fleet {
@@ -198,6 +263,11 @@ export class Fleet {
   private tramMid: FPool;
   private ferry: FPool;
   private cabin: FPool;
+  private truck: FPool;
+  private load: FPool;
+  private loco: FPool;
+  private wagon: FPool;
+  private wload: FPool;
   private mat: THREE.MeshStandardMaterial;
 
   constructor(scene: THREE.Scene, readonly world: World) {
@@ -221,6 +291,11 @@ export class Fleet {
     this.tramMid = mk(tramGeo(false), 100);
     this.ferry = mk(ferryGeo(), 60);
     this.cabin = mk(cabinGeo(), 220);
+    this.truck = mk(truckGeo(), 120);
+    this.load = mk(loadGeo(), 120);
+    this.loco = mk(locoGeo(), 40);
+    this.wagon = mk(wagonGeo(), 160);
+    this.wload = mk(wagonLoadGeo(), 160);
     scene.add(this.group);
   }
 
@@ -238,7 +313,7 @@ export class Fleet {
   update(traffic: Traffic, transit: Transit, accidents: Iterable<number> = [], cableY: (line: Line, d: number) => number = () => 1, time = 0) {
     const w = this.world;
     for (const c of this.cars) c.n = 0;
-    this.bus.n = 0; this.trainHead.n = 0; this.trainMid.n = 0; this.tramHead.n = 0; this.tramMid.n = 0; this.ferry.n = 0; this.cabin.n = 0;
+    this.bus.n = 0; this.trainHead.n = 0; this.trainMid.n = 0; this.tramHead.n = 0; this.tramMid.n = 0; this.ferry.n = 0; this.cabin.n = 0; this.truck.n = 0; this.load.n = 0; this.loco.n = 0; this.wagon.n = 0; this.wload.n = 0;
     const tmpC = new THREE.Color();
     for (const v of traffic.vehicles) {
       if (v.dead) continue;
@@ -250,6 +325,11 @@ export class Fleet {
         // paint colours are authored in sRGB; convert once for the linear pipeline
         tmpC.set(c);
         this.putLin(this.cars[v.shape % 3], v.x, y, v.z, v.ang, tmpC);
+      } else if (v.carrier && v.carrier.line.kind === 'truck') {
+        tmpC.set(v.color);
+        this.putLin(this.truck, v.x, y, v.z, v.ang, tmpC);
+        const ld = v.carrier.load;
+        if (ld && ld.qty > 0.5) { tmpC.set(CARGO_INFO[CARGO_LIST[ld.type]].color); this.putLin(this.load, v.x, y, v.z, v.ang, tmpC, Math.min(1, 0.45 + ld.qty / v.carrier.cap * 0.55)); }
       } else {
         tmpC.set(v.color);
         this.putLin(this.bus, v.x, y, v.z, v.ang, tmpC);
@@ -263,8 +343,24 @@ export class Fleet {
     }
     const pos = { x: 0, z: 0, ang: 0 };
     for (const line of transit.lines) {
-      if (line.kind === 'bus' || !line.poly) continue;
+      if (line.kind === 'bus' || line.kind === 'truck' || !line.poly) continue;
       tmpC.set(line.color);
+      if (line.kind === 'freight') {
+        for (const c of line.vehicles) {
+          const dir = c.dir;
+          for (let k = 0; k < 4; k++) {
+            line.poly.at(c.d - dir * k * 0.29, c.off, pos);
+            const ang = pos.ang + (dir < 0 ? Math.PI : 0);
+            if (k === 0) this.putLin(this.loco, pos.x, TRACK_Y + 0.05, pos.z, ang, tmpC);
+            else {
+              this.putLin(this.wagon, pos.x, TRACK_Y + 0.05, pos.z, ang, tmpC);
+              const ld = c.load;
+              if (ld && ld.qty > 0.5 && ld.qty > (k - 1) * c.cap / 3 * 0.9) { const col = new THREE.Color(CARGO_INFO[CARGO_LIST[ld.type]].color); this.putLin(this.wload, pos.x, TRACK_Y + 0.05, pos.z, ang, col); }
+            }
+          }
+        }
+        continue;
+      }
       if (line.kind === 'tram') {
         for (const c of line.vehicles) {
           const dir = c.dir;
@@ -311,18 +407,18 @@ export class Fleet {
         }
       }
     }
-    for (const p of [...this.cars, this.bus, this.trainHead, this.trainMid, this.tramHead, this.tramMid, this.ferry, this.cabin]) {
+    for (const p of [...this.cars, this.bus, this.trainHead, this.trainMid, this.tramHead, this.tramMid, this.ferry, this.cabin, this.truck, this.load, this.loco, this.wagon, this.wload]) {
       p.mesh.count = p.n;
       p.mesh.instanceMatrix.needsUpdate = true;
       p.tint.needsUpdate = true;
     }
   }
 
-  private putLin(p: FPool, x: number, y: number, z: number, ang: number, c: THREE.Color) {
+  private putLin(p: FPool, x: number, y: number, z: number, ang: number, c: THREE.Color, sy = 1) {
     if (p.n >= p.cap) return;
     tmpObj.position.set(x, y, z);
     tmpObj.rotation.set(0, -ang, 0);
-    tmpObj.scale.setScalar(1);
+    tmpObj.scale.set(1, sy, 1);
     tmpObj.updateMatrix();
     p.mesh.setMatrixAt(p.n, tmpObj.matrix);
     // THREE.Color.set(hex) converts sRGB -> linear working space already

@@ -4,7 +4,8 @@ import type { Game, Cmd } from './game.ts';
 import { COST } from './game.ts';
 import { MODES, MODE_ORDER, type Mode } from './modes.ts';
 import { N, tileIdx, tileX, tileY, wx, wz } from './world.ts';
-import type { Line, Stop } from './types.ts';
+import type { Line, Stop, Building } from './types.ts';
+import { CARGO_INFO, CARGO_LIST, FACILITY, isIndustry, room, CATCH } from './industry.ts';
 
 export interface Advice {
   id: string;
@@ -82,6 +83,59 @@ export function autoLine(g: Game, mode: Mode): Cmd & { line?: Line } {
     last = r.msg ?? last;
   }
   return { ok: false, msg: last };
+}
+
+// ------------------------------------------------------------------ freight
+
+/** the closest tile that can host a yard (or depot) for a facility */
+export function yardFor(g: Game, b: Building, mode: 'truck' | 'freight'): number {
+  let best = -1, bd = 99;
+  for (let y = b.y - 3; y <= b.y + 3; y++) for (let x = b.x - 3; x <= b.x + 3; x++) {
+    if (x < 0 || y < 0 || x >= N || y >= N) continue;
+    const t = tileIdx(x, y);
+    if (g.spotCheck(mode, t)) continue;
+    if (mode === 'truck' && g.roadDegree(t) >= 3) continue;
+    const d = Math.hypot(x - b.x, y - b.y) + (g.world.stop[t] >= 0 ? -0.5 : 0);
+    if (Math.hypot(wx(x) - wx(b.x), wz(y) - wz(b.y)) > CATCH) continue;
+    if (d < bd) { bd = d; best = t; }
+  }
+  return best;
+}
+
+const servedBy = (g: Game, b: Building) => g.transit.lines.some((l) => (l.kind === 'truck' || l.kind === 'freight') && l.stops.some((s) => Math.hypot(s.x - wx(b.x), s.z - wz(b.y)) <= CATCH));
+
+/** best producer to connect and where its cargo should go */
+export function freightOffer(g: Game): { from: Building; to: Building; idx: number; tiles: number[]; cost: number; est: number } | null {
+  const sites = g.city.cargoSites();
+  let best: ReturnType<typeof freightOffer> = null;
+  for (const p of sites) {
+    if (!isIndustry(p.special) || p.special === 'terminal') continue;
+    const F = FACILITY[p.special as 'farm' | 'quarry' | 'factory'];
+    if (F.makes < 0 || p.out[F.makes] < 14 || servedBy(g, p)) continue;
+    const a = yardFor(g, p, 'truck');
+    if (a < 0) continue;
+    for (const q of sites) {
+      if (q === p || room(q, F.makes) < 8) continue;
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d < 4 || d > 22) continue;
+      const bt = yardFor(g, q, 'truck');
+      if (bt < 0 || bt === a) continue;
+      const qt = g.quoteLine('truck', [a, bt]);
+      if (!qt.ok || qt.cost > g.money) continue;
+      const est = Math.min(F.rate * p.eff, 60) * CARGO_INFO[CARGO_LIST[F.makes]].rate * d * (q.special === 'terminal' ? 1.25 : 1);
+      if (!best || est > best.est) best = { from: p, to: q, idx: F.makes, tiles: [a, bt], cost: qt.cost, est };
+    }
+  }
+  return best;
+}
+
+export function autoFreight(g: Game): Cmd & { line?: Line } {
+  if (!g.unlocked.truck) return { ok: false, msg: 'Freight is not unlocked yet.' };
+  const o = freightOffer(g);
+  if (!o) return { ok: false, msg: 'I could not find a farm, quarry or factory worth connecting right now.' };
+  const r = g.createLine('truck', o.tiles);
+  if (r.ok && r.line) { g.addVehicle(r.line); }
+  return r;
 }
 
 /** a rough price for the advisor's offer (cached for a few seconds, the search is not free) */
@@ -213,6 +267,22 @@ export function advise(g: Game, dismissed: Set<string>): Advice[] {
       const m = MODES[l.kind];
       add({ id: 'full' + l.id, tone: 'tip', title: `${l.name} is nearly full`, body: `Every ${m.vehicle} is packed. One more keeps the stops from backing up.`, cta: `Add a ${m.vehicle} · ${fmt$(tr.vehicleCost(l))}`, act: () => g.addVehicle(l), lineId: l.id });
     }
+  }
+
+  // 7b. cargo piling up with nobody hauling it, or a freight line that cannot keep up
+  if (g.unlocked.truck && roomForLine) {
+    const o = freightOffer(g);
+    if (o && g.money > o.cost + 600) {
+      const ci = CARGO_INFO[CARGO_LIST[o.idx]];
+      add({ id: 'freight' + o.from.id + '_' + o.to.id, tone: 'tip', title: `${o.from.name} has ${ci.label.toLowerCase()} to move`, body: `${Math.floor(o.from.out[o.idx])} units are waiting and nobody collects them. A truck line to ${o.to.name} pays about ${fmt$(o.est)} a day.`, cta: `Build a truck line · ${fmt$(o.cost)}`, act: () => autoFreight(g), focus: { x: wx(o.from.x), z: wz(o.from.y), dist: 18 } });
+    }
+  }
+  for (const l of tr.lines) {
+    if (l.kind !== 'truck' && l.kind !== 'freight') continue;
+    if (l.vehicles.length >= tr.maxVehicles(l) || g.money < tr.vehicleCost(l) * 2) continue;
+    let waiting = 0;
+    for (const s of l.stops) for (const b of g.city.sitesNear(s.x, s.z)) if (isIndustry(b.special)) for (const v of b.out) waiting += v;
+    if (waiting > 100 * l.stops.length * 0.45 && l.vehicles.length < 4) add({ id: 'haul' + l.id, tone: 'tip', title: `${l.name} cannot keep up`, body: 'Cargo is stacking up at the loading yards. Another vehicle moves more and the industry grows when it is well served.', cta: `Add a ${MODES[l.kind].vehicle} · ${fmt$(tr.vehicleCost(l))}`, act: () => g.addVehicle(l), lineId: l.id });
   }
 
   // 8. cash to spare

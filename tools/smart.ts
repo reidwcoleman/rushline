@@ -62,6 +62,15 @@ const wall = Date.now();
 const endT = g.t + days * DAY;
 while (g.t < endT && !g.over) {
   g.update(0.05);
+  if (process.env.DIAG && g.t > +process.env.DIAG * DAY) {
+    const c = g.city;
+    const cnt: Record<string, number> = {};
+    for (const p of c.persons) { const k = `${p.state}/${p.phase}${p.student ? '/pupil' : ''}${p.stage === 'senior' ? '/sen' : ''}`; cnt[k] = (cnt[k] ?? 0) + 1; }
+    console.log('DIAG day', g.day, 'hour', g.hour.toFixed(1), 'pop', c.persons.length, JSON.stringify(cnt));
+    for (const s of g.transit.stops.filter((q) => q.queue.length > q.cap * 0.6)) console.log('  stop', s.name, s.kind, s.queue.length, '/', s.cap, 'lines', s.lines.map((l) => l.name).join(','));
+    for (const l of g.transit.lines) console.log('  line', l.name, l.kind, 'veh', l.vehicles.length, 'board', l.boardings, 'broken', l.broken, 'riders', l.riders.toFixed(1));
+    break;
+  }
   if (g.t > nextEma) { nextEma = g.t + 1; for (let i = 0; i < N * N; i++) loadEma[i] += (g.traffic.load[i] - loadEma[i]) * 0.1; }
   if (g.t > nextAct) {
     nextAct = g.t + DAY * (0.25 / Math.max(0.2, skill));

@@ -2,7 +2,7 @@ import './style.css';
 import { Game, restore } from './sim/game.ts';
 import { View } from './render/view.ts';
 import { App, loadSave } from './ui/app.ts';
-import { growDemo, addModes } from './dev.ts';
+import { growDemo, addModes, addFreight } from './dev.ts';
 
 const params = new URLSearchParams(location.search);
 let game: Game;
@@ -12,6 +12,7 @@ else game = new Game(+(params.get('seed') ?? 1 + Math.floor(Math.random() * 9000
 if (params.has('demo')) growDemo(game, +(params.get('demo') || 6), !params.has('nometro'));
 let modeIds: Record<string, number | null> = {};
 if (params.has('modes')) modeIds = addModes(game);
+if (params.has('freight')) modeIds = { ...modeIds, ...addFreight(game) };
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const view = new View(game, canvas);
 const app = new App(game, view, { title: !params.has('play') && !params.has('demo') && !params.has('hold') });

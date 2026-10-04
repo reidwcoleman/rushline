@@ -10,13 +10,25 @@ const gentle = process.argv[4] === 'gentle';
 const g = new Game(seed);
 const w = g.world;
 g.money = 1e7;
-for (const k of ['tram', 'ferry', 'gondola', 'metro'] as const) g.unlocked[k] = true;
+for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight'] as const) g.unlocked[k] = true;
 const R = () => g.rand();
 let ops = 0;
 function randTile() { return Math.floor(R() * N * N); }
 function randRoad() { for (let k = 0; k < 200; k++) { const t = randTile(); if (w.road[t]) return t; } return -1; }
 function randShore() { for (let k = 0; k < 300; k++) { const t = randTile(); if (w.shore[t]) return t; } return randTile(); }
-function randSpot(m: Mode) { return m === 'bus' || m === 'tram' ? randRoad() : m === 'ferry' ? randShore() : randTile(); }
+function randNearSite(wantRoad: boolean) {
+  const sites = g.city.cargoSites();
+  if (!sites.length) return randTile();
+  for (let k = 0; k < 40; k++) {
+    const b = sites[(R() * sites.length) | 0];
+    const x = Math.max(0, Math.min(N - 1, b.x + ((R() * 7) | 0) - 3)), y = Math.max(0, Math.min(N - 1, b.y + ((R() * 7) | 0) - 3));
+    const t = tileIdx(x, y);
+    if (!g.spotCheck(wantRoad ? 'truck' : 'freight', t)) return t;
+  }
+  return randTile();
+}
+function randSpot(m: Mode) { return m === 'bus' || m === 'tram' ? randRoad() : m === 'truck' ? randNearSite(true) : m === 'freight' ? randNearSite(false) : m === 'ferry' ? randShore() : randTile(); }
+const FUZZ_MODES: Mode[] = [...MODE_ORDER.slice(1), 'truck', 'freight'];
 function act() {
   ops++;
   (globalThis as any).__lastop = 'start';
@@ -34,7 +46,7 @@ function act() {
   else if (r < 0.41) g.bulldoze(randRoad() >= 0 ? randRoad() : 0);
   else if (r < 0.48) { for (const d of w.districts) if (!d.unlocked) { g.unlockDistrict(d.index); break; } }
   else if (r < 0.58) { const a = randRoad(), b = randRoad(), c = randRoad(); if (a >= 0 && b >= 0 && c >= 0) g.createBusLine([a, b, c].filter((v, i, arr) => arr.indexOf(v) === i)); }
-  else if (r < 0.64) { const m = MODE_ORDER[1 + ((R() * 4) | 0)]; const a = randSpot(m), b = randSpot(m); if (a >= 0 && b >= 0) { const ts = R() < 0.4 ? [a, b, randSpot(m)].filter((v, i, arr) => v >= 0 && arr.indexOf(v) === i) : [a, b]; g.createLine(m, ts); } }
+  else if (r < 0.64) { const m = FUZZ_MODES[(R() * FUZZ_MODES.length) | 0]; const a = randSpot(m), b = randSpot(m); if (a >= 0 && b >= 0) { const ts = R() < 0.4 ? [a, b, randSpot(m)].filter((v, i, arr) => v >= 0 && arr.indexOf(v) === i) : [a, b]; g.createLine(m, ts); } }
   else if (r < 0.70) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.addVehicle(l); }
   else if (r < 0.74) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.removeVehicle(l); }
   else if (r < 0.77) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.deleteLine(l); }
@@ -56,11 +68,28 @@ function check() {
   for (const s of g.transit.stops) if (w.stop[s.tile] !== s.id) throw new Error('stop map mismatch');
   for (const l of g.transit.lines) for (const s of l.stops) if (!g.transit.stopById.has(s.id)) throw new Error('line has dead stop');
   for (const l of g.transit.lines) {
-    if (l.kind === 'bus') continue;
+    if (l.kind === 'bus' || l.kind === 'truck') continue;
     if (!l.poly || l.stopIdx.length !== l.stops.length || l.stopDist.length !== l.stops.length) throw new Error(`line ${l.name} geometry mismatch`);
     for (let k = 1; k < l.stopDist.length; k++) if (l.stopDist[k] < l.stopDist[k - 1] - 1e-6) throw new Error(`line ${l.name} stops out of order`);
     for (const c of l.vehicles) { if (!isFinite(c.d) || c.d < -0.01 || c.d > l.poly.length + 0.01) throw new Error(`carrier off its line ${l.name} d=${c.d} len=${l.poly.length}`); if (!isFinite(c.speed)) throw new Error('carrier NaN speed'); }
   }
+  for (const p of g.city.persons) {
+    if (p.dead) throw new Error('dead person in list');
+    if (!g.city.personById.has(p.id)) throw new Error('person index mismatch');
+    if (p.hh.members.indexOf(p) < 0) throw new Error('person not in household');
+    for (const k of ['energy', 'hunger', 'fun', 'social', 'comfort'] as const) if (!(p.needs[k] >= 0 && p.needs[k] <= 1)) throw new Error('need out of range ' + k + ' ' + p.needs[k]);
+    if (!isFinite(p.mood) || !isFinite(p.wallet) || !isFinite(p.sat)) throw new Error('person NaN');
+    if (p.work && p.work.workers.indexOf(p) < 0 && p.work.students.indexOf(p) < 0) throw new Error('person not on staff list of ' + p.work.name);
+    if (p.phase === 'ride' && (!p.ride || p.ride.passengers.indexOf(p) < 0)) throw new Error('rider not in a vehicle');
+    if (p.stage === 'senior' && p.work && !p.work.special) throw new Error('retired person still has a job');
+    const pos = g.city.positionOf(p);
+    if (!isFinite(pos.x) || !isFinite(pos.z)) throw new Error('person position NaN');
+  }
+  for (const b of g.city.buildings.values()) { if (b.guests.some((q) => q.dead)) throw new Error('dead guest'); for (const q of b.residents) if (q.home !== b) throw new Error('resident home mismatch'); }
+  for (const l of g.transit.lines) for (const c of l.vehicles) { if (!(c.cond >= 0 && c.cond <= 1.0001)) throw new Error('bad vehicle condition ' + c.cond); }
+  if (g.loan < 0 || !isFinite(g.money)) throw new Error('bad money/loan');
+  for (const b of g.city.buildings.values()) for (let i = 0; i < 3; i++) if (!(b.out[i] >= -1e-6 && b.stock[i] >= -1e-6) || !isFinite(b.out[i]) || !isFinite(b.stock[i])) throw new Error('bad cargo on ' + b.name);
+  for (const l of g.transit.lines) for (const c of l.vehicles) if (c.load && (!(c.load.qty >= 0) || c.load.qty > c.cap + 0.01)) throw new Error('bad load ' + (c.load?.qty));
   for (const p of g.city.persons) if ((p.phase === 'wait') && p.stopRef && !g.transit.stopById.has(p.stopRef.id)) throw new Error('person waiting at a removed stop');
   for (let i = 0; i < N * N; i++) { const c = g.traffic.tileCars[i]; for (const v of c) if (v.dead) throw new Error('dead car in tile list'); }
 }

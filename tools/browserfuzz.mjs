@@ -12,7 +12,7 @@ const res = await page.evaluate(async (rounds) => {
   __hold(true);
   const g = __game, w = g.world, app = __app;
   g.money = 5e6;
-  for (const k of ['tram', 'ferry', 'gondola', 'metro']) g.unlocked[k] = true;
+  for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight', 'school', 'clinic']) g.unlocked[k] = true;
   const R = () => g.rand();
   const N = 40;
   const randTile = () => Math.floor(R() * N * N);
@@ -43,8 +43,20 @@ const res = await page.evaluate(async (rounds) => {
         else if (kd === 'road') { const t = randRoad(); if (t >= 0) app.tools.setSelection({ type: 'road', tile: t }); }
         else { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) app.tools.setSelection({ type: 'line', id: l.id }); }
       }
-      else if (x < 0.94) { app.hud.setOverlay(['none', 'traffic', 'transit', 'happy'][(R() * 4) | 0], true); }
-      else { app.panels.toggle(R() < 0.5 ? 'lines' : 'policies'); }
+      else if (x < 0.92) { app.hud.setOverlay(['none', 'traffic', 'transit', 'happy'][(R() * 4) | 0], true); }
+      else if (x < 0.935) { // citizens
+        const ps = g.city.persons; const p = ps[(R() * ps.length) | 0];
+        if (p) { app.selectPerson(p, R() < 0.5); if (R() < 0.4) app.toggleFollow(); }
+      }
+      else if (x < 0.95) { // freight and services
+        const sites = g.city.cargoSites().filter((b) => b.special);
+        const b = sites[(R() * sites.length) | 0];
+        if (b) { const m = R() < 0.7 ? 'truck' : 'freight'; const near = () => { for (let k = 0; k < 60; k++) { const t = Math.max(0, Math.min(1599, (b.y + ((R() * 7) | 0) - 3) * N + b.x + ((R() * 7) | 0) - 3)); if (!g.spotCheck(m, t)) return t; } return -1; }; const a = near(), c = near(); if (a >= 0 && c >= 0 && a !== c) { const r = g.createLine(m, [a, c]); if (r.ok) g.addVehicle(r.line); } }
+        g.placeService(R() < 0.5 ? 'school' : 'clinic', randTile());
+      }
+      else if (x < 0.965) { app.tools.setGroup(R() < 0.5 ? 'cargo' : 'people'); app.tools.select(['inspect', 'service', 'transit'][(R() * 3) | 0]); }
+      else if (x < 0.975) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) { g.setFare(l, [0, 0.5, 1, 1.5, 2.2][(R() * 5) | 0]); g.renewLine(l, R() < 0.5); } g.takeLoan(5000); if (R() < 0.3) g.repayLoan(3000); g.setMaintenance((R() * 3) | 0); g.startResearch(['bus', 'tram', 'metro'][(R() * 3) | 0]); }
+      else { app.panels.toggle(['lines', 'policies', 'citizens', 'company'][(R() * 4) | 0]); }
     }
     g.stability = 100;
     g.speed = 4; __pump(14, 0.1);

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { MeshBuilder, patch, lin, shade3, mix3, instAttr, tmpObj, U } from './gfx.ts';
 import { smoothTilePath } from '../sim/path.ts';
 import { wx, wz, tileX, tileY, DX, DY, N, inMap, tileIdx, WATER_LEVEL, type World } from '../sim/world.ts';
-import { MODES } from '../sim/modes.ts';
+import { MODES, isSolidCode } from '../sim/modes.ts';
 import type { Transit } from '../sim/transit.ts';
 import type { Line, Stop } from '../sim/types.ts';
 import { TRACK_Y } from './fleet.ts';
@@ -98,7 +98,7 @@ function viaduct(line: Line, world: World): THREE.BufferGeometry {
   void p2;
   for (let k = 0; k < line.tiles.length; k++) {
     const t = line.tiles[k];
-    if (world.stopKind[t] === 2) continue;
+    if (isSolidCode(world.stopKind[t])) continue;
     poly.at(tileDist[k], 0, tmp);
     const water = world.water[t] === 1;
     const g = water ? -0.62 : 0.012;
@@ -118,7 +118,7 @@ function viaduct(line: Line, world: World): THREE.BufferGeometry {
   return b.geometry();
 }
 
-function stationGeo(stop: Stop, ang: number, colors: number[]): THREE.BufferGeometry {
+function stationGeo(stop: Stop, ang: number, colors: number[], freight = false): THREE.BufferGeometry {
   const b = new MeshBuilder();
   b.paintW = 0;
   const ca = Math.cos(ang), sa = Math.sin(ang);
@@ -154,6 +154,23 @@ function stationGeo(stop: Stop, ang: number, colors: number[]): THREE.BufferGeom
     b.emitV = sp;
   };
   const accent = lin(colors[0] ?? 0xffb02e);
+  if (freight) {
+    // loading apron on both sides of the track, a shed on one, stacked cargo and a gantry crane on the other
+    const apron = lin(0xb9b5ab);
+    for (const sgn of [-1, 1]) slab(-0.47, 0.47, sgn > 0 ? 0.15 : -0.45, sgn > 0 ? 0.45 : -0.15, TRACK_Y - 0.07, TRACK_Y + 0.025, PLAT, apron);
+    slab(-0.4, 0.4, 0.2, 0.44, TRACK_Y + 0.025, TRACK_Y + 0.2, lin(0xd8d3c6), lin(0x8a8f96));
+    slab(-0.41, 0.41, 0.19, 0.45, TRACK_Y + 0.2, TRACK_Y + 0.215, lin(0x6a7078), lin(0x7d848c));
+    for (const u of [-0.26, -0.06, 0.14, 0.32]) slab(u - 0.05, u + 0.05, 0.195, 0.2, TRACK_Y + 0.03, TRACK_Y + 0.15, lin(0x4a515c), lin(0x4a515c));
+    slab(-0.36, 0.0, 0.46, 0.5, TRACK_Y + 0.0, TRACK_Y + 0.05, accent, accent);
+    const stackCols = [lin(0x7ac85a), lin(0x9ea6b0), lin(0xd29a5c)];
+    for (let i = 0; i < 6; i++) { const u = -0.38 + (i % 3) * 0.2, v = -0.36 + Math.floor(i / 3) * 0.14; slab(u - 0.08, u + 0.08, v - 0.06, v + 0.06, TRACK_Y + 0.025, TRACK_Y + 0.025 + 0.05 + (i % 2) * 0.05, stackCols[i % 3], stackCols[i % 3]); }
+    const gy = TRACK_Y + 0.34;
+    for (const v of [-0.47, 0.47]) slab(0.0, 0.03, v - 0.012, v + 0.012, TRACK_Y - 0.07, gy, lin(0xf2b84b), lin(0xf2b84b));
+    slab(-0.01, 0.04, -0.49, 0.49, gy, gy + 0.03, lin(0xf2b84b), lin(0xf2b84b));
+    slab(0.0, 0.02, -0.01, 0.01, gy - 0.07, gy, lin(0x3b4048), lin(0x3b4048));
+    slab(0.3, 0.4, 0.4, 0.46, TRACK_Y + 0.26, TRACK_Y + 0.33, accent, lin(0xffffff), 1.8);
+    return b.geometry();
+  }
   // platforms (two sides)
   for (const s of [-1, 1]) {
     slab(-0.47, 0.47, s > 0 ? 0.16 : -0.34, s > 0 ? 0.34 : -0.16, TRACK_Y - 0.07, TRACK_Y + 0.03, PLAT, lin(0xece8de));
@@ -182,6 +199,26 @@ function stationGeo(stop: Stop, ang: number, colors: number[]): THREE.BufferGeom
   // staircases (diagonal quad ribbon) from the platform end down to the tower foot: a simple wedge
   const [wx0, wz0] = P(0.02, 0.43);
   void wx0; void wz0;
+  return b.geometry();
+}
+
+function yardGeo(colors: number[], alongX: boolean) {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  const c0 = lin(colors[0] ?? 0xd9a441);
+  const T = (x: number, z: number, w: number, d: number, y0: number, h: number, c: number[], em = 0) => {
+    const [bx, bz, bw, bd] = alongX ? [x, z, w, d] : [z, x, d, w];
+    b.box(bx, y0, bz, bw, h, bd, c, { emit: em });
+  };
+  T(0, 0, 0.5, 0.13, 0.012, 0.01, lin(0xb9b5ab));                                   // concrete apron
+  for (let i = 0; i < 6; i++) T(-0.22 + i * 0.088, 0.058, 0.04, 0.012, 0.0225, 0.002, i % 2 ? lin(0x2a2f36) : lin(0xf2c14e));   // hazard stripe
+  T(-0.12, -0.01, 0.2, 0.07, 0.022, 0.012, lin(0x8a6a48));                          // pallets
+  T(-0.14, -0.01, 0.07, 0.055, 0.034, 0.05, lin(0x7ac85a)); T(-0.06, -0.01, 0.07, 0.055, 0.034, 0.05, lin(0xd29a5c));
+  T(-0.1, -0.01, 0.07, 0.055, 0.084, 0.04, lin(0x9ea6b0));
+  T(0.12, -0.03, 0.1, 0.05, 0.022, 0.085, lin(0xdfe3e8));                           // hut
+  T(0.12, -0.03, 0.108, 0.058, 0.107, 0.008, c0);
+  T(0.2, 0.04, 0.006, 0.006, 0.012, 0.2, lin(0x4a515c));                            // sign pole
+  T(0.2, 0.04, 0.05, 0.016, 0.17, 0.04, c0, 1.4);
   return b.geometry();
 }
 
@@ -583,7 +620,7 @@ export class TransitGfx {
     this.viaducts.clear(); this.stations.clear(); this.shelters.clear(); this.trams.clear(); this.piers.clear(); this.gondolaStations.clear();
     for (const line of tr.lines) {
       if (!line.poly) continue;
-      if (line.kind === 'metro') {
+      if (line.kind === 'metro' || line.kind === 'freight') {
         const m = new THREE.Mesh(viaduct(line, this.world), this.mat);
         m.castShadow = true; m.receiveShadow = true;
         this.group.add(m);
@@ -599,7 +636,7 @@ export class TransitGfx {
     for (const s of tr.stops) {
       const colors = s.lines.map((l) => l.color);
       if (!colors.length) colors.push(MODES[s.kind].color);
-      if (s.kind === 'metro') {
+      if (s.kind === 'metro' || s.kind === 'freight') {
         // orientation from the first line through it
         const l = s.lines.find((x) => x.poly) ?? null;
         let ang = 0;
@@ -609,7 +646,7 @@ export class TransitGfx {
           l.poly.at(l.stopDist[k], 0, tmp);
           ang = tmp.ang;
         } else ang = 0;
-        const m = new THREE.Mesh(stationGeo(s, ang, colors), this.mat);
+        const m = new THREE.Mesh(stationGeo(s, ang, colors, s.kind === 'freight'), this.mat);
         m.castShadow = true; m.receiveShadow = true;
         this.group.add(m);
         this.stations.set(s.id, m);
@@ -641,7 +678,7 @@ export class TransitGfx {
         const hz = (inMap(tx - 1, ty) && this.world.road[tileIdx(tx - 1, ty)]) || (inMap(tx + 1, ty) && this.world.road[tileIdx(tx + 1, ty)]);
         const vt = (inMap(tx, ty - 1) && this.world.road[tileIdx(tx, ty - 1)]) || (inMap(tx, ty + 1) && this.world.road[tileIdx(tx, ty + 1)]);
         const alongX = !!hz && (!vt || (tx + ty) % 2 === 0);
-        const geo = s.kind === 'tram' ? tramShelterGeo(colors, alongX) : shelterGeo(colors, alongX);
+        const geo = s.kind === 'tram' ? tramShelterGeo(colors, alongX) : s.kind === 'truck' ? yardGeo(colors, alongX) : shelterGeo(colors, alongX);
         const m = new THREE.Mesh(geo, this.mat);
         // east-west roads: shelter on the south sidewalk; north-south: west sidewalk
         const ox = alongX ? 0 : -0.435, oz = alongX ? 0.435 : 0;

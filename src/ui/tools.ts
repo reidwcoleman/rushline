@@ -1,23 +1,28 @@
 // Tools and input: pointer / keyboard handling, drafting roads and lines, selection and previews.
-import { Game, COST, UNLOCK } from '../sim/game.ts';
+import { Game, COST, UNLOCK, SERVICE, type ServiceKind } from '../sim/game.ts';
 import { N, HALF, tileIdx, tileX, tileY, wx, wz, inMap, DX, DY } from '../sim/world.ts';
-import { MODES, MODE_ORDER, type Mode } from '../sim/modes.ts';
+import { MODES, MODE_ORDER, CARGO_ORDER, isRoadMode, isCargoMode, type Mode } from '../sim/modes.ts';
+import { isIndustry, CATCH } from '../sim/industry.ts';
 import type { Line } from '../sim/types.ts';
 import type { View } from '../render/view.ts';
 import type { App } from './app.ts';
 import { TRACK_Y } from '../render/fleet.ts';
 import { money } from './dom.ts';
+import { venueLabel } from '../sim/people.ts';
 
-export type ToolId = 'inspect' | 'road' | 'avenue' | 'transit' | 'park' | 'arena' | 'bulldoze';
-export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'transit', 'park', 'arena', 'bulldoze'];
+export type ToolId = 'inspect' | 'road' | 'avenue' | 'transit' | 'park' | 'arena' | 'bulldoze' | 'service';
+export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'transit', 'park', 'arena', 'bulldoze', 'service'];
 
-export type Selection = { type: 'building'; id: number } | { type: 'stop'; id: number } | { type: 'road'; tile: number } | { type: 'line'; id: number } | null;
+export type Selection = { type: 'building'; id: number } | { type: 'person'; id: number } | { type: 'stop'; id: number } | { type: 'road'; tile: number } | { type: 'line'; id: number } | null;
 
 interface Draft { kind: Mode; tiles: number[]; extend: Line | null }
 
 export class Tools {
   tool: ToolId = 'inspect';
   mode: Mode = 'bus';
+  /** which family of lines the transit tool is building */
+  group: 'people' | 'cargo' = 'people';
+  service: ServiceKind = 'school';
   autoStops = true;
   hover: { tile: number; x: number; z: number } | null = null;
   draft: Draft | null = null;
@@ -55,6 +60,7 @@ export class Tools {
 
   select(t: ToolId) {
     if (t === 'avenue' && !this.game.unlocked.avenue) { this.app.toast(`Avenues unlock at ${UNLOCK.avenue} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (t === 'service' && !this.game.unlocked.school) { this.app.toast(`Schools unlock at ${UNLOCK.school} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (t === 'arena' && !this.game.unlocked.arena) { this.app.toast(`The arena unlocks at ${UNLOCK.arena.toLocaleString()} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (this.tool === t && t !== 'inspect') { this.cancelDraft(); this.tool = 'inspect'; this.app.hud.refreshTools(); this.refreshPreview(true); return; }
     this.cancelDraft();
@@ -67,13 +73,31 @@ export class Tools {
     this.refreshPreview(true);
   }
 
-  modeUnlocked(m: Mode) { return m === 'bus' || this.game.unlocked[m]; }
+  setService(k: ServiceKind) {
+    if (!this.game.unlocked[k]) { this.app.toast(`${SERVICE[k].label}s unlock at ${SERVICE[k].unlock} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    this.service = k; this.tool = 'service';
+    this.app.sound.sfx('click');
+    this.app.hud.refreshTools();
+    this.refreshPreview(true);
+  }
+
+  modeUnlocked(m: Mode) { return m === 'bus' || this.game.unlocked[m as keyof Game['unlocked']]; }
+
+  setGroup(gp: 'people' | 'cargo') {
+    if (this.draft?.extend) return;
+    const list = gp === 'cargo' ? CARGO_ORDER : MODE_ORDER;
+    const m = list.find((x) => this.modeUnlocked(x));
+    if (!m) { this.app.toast(`Freight unlocks at ${MODES.truck.unlock} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    this.group = gp;
+    this.setMode(this.mode !== m && list.includes(this.mode) && this.modeUnlocked(this.mode) ? this.mode : m);
+  }
 
   setMode(m: Mode) {
     if (!this.modeUnlocked(m)) { this.app.toast(`${MODES[m].label} unlocks at ${MODES[m].unlock} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (this.draft?.extend) return;
     this.cancelDraft();
     this.mode = m;
+    this.group = isCargoMode(m) ? 'cargo' : 'people';
     this.tool = 'transit';
     this.app.sound.sfx('click');
     this.app.hud.refreshTools();
@@ -81,7 +105,7 @@ export class Tools {
   }
 
   cycleMode(dir = 1) {
-    const list = MODE_ORDER.filter((m) => this.modeUnlocked(m));
+    const list = (this.group === 'cargo' ? CARGO_ORDER : MODE_ORDER).filter((m) => this.modeUnlocked(m));
     const i = list.indexOf(this.mode);
     this.setMode(list[(i + dir + list.length) % list.length]);
   }
@@ -97,6 +121,7 @@ export class Tools {
   startExtend(line: Line) {
     this.tool = 'transit';
     this.mode = line.kind;
+    this.group = isCargoMode(line.kind) ? 'cargo' : 'people';
     this.draft = { kind: line.kind, tiles: [], extend: line };
     this.selection = null;
     this.app.hud.refreshTools();
@@ -155,6 +180,7 @@ export class Tools {
       if (this.pan.button === 1 || (this.pan.button === 0 && this.pan.shift)) this.view.rig.rotate(-dx * 0.006, dy * 0.004);
       else this.view.rig.pan(dx, dy);
       this.moved = this.pan.moved > 4;
+      if (this.moved && this.view.follow) this.app.stopFollow();
       return;
     }
     // hover / drag over canvas only
@@ -211,6 +237,12 @@ export class Tools {
         break;
       case 'arena': {
         const r = this.game.placeArena(t);
+        if (!r.ok) { this.app.toast(r.msg ?? 'Cannot build there.', 'warn'); this.app.sound.sfx('error'); }
+        else { this.select('inspect'); this.setSelection({ type: 'building', id: this.game.world.bld[t] }); }
+        break;
+      }
+      case 'service': {
+        const r = this.game.placeService(this.service, t);
         if (!r.ok) { this.app.toast(r.msg ?? 'Cannot build there.', 'warn'); this.app.sound.sfx('error'); }
         else { this.select('inspect'); this.setSelection({ type: 'building', id: this.game.world.bld[t] }); }
         break;
@@ -341,12 +373,17 @@ export class Tools {
     const pk = this.view.pick(e.clientX, e.clientY);
     if (!pk || pk.tile < 0) { this.setSelection(null); return; }
     const g = this.game, w = g.world, t = pk.tile;
+    const who = this.view.citizens.pick(pk.x, pk.z, this.pickRadius());
+    if (who) { this.app.selectPerson(who); return; }
     if (w.stop[t] >= 0) this.setSelection({ type: 'stop', id: w.stop[t] });
     else if (w.bld[t] >= 0) this.setSelection({ type: 'building', id: w.bld[t] });
     else if (w.road[t]) this.setSelection({ type: 'road', tile: t });
     else this.setSelection(null);
     this.app.sound.sfx('tick');
   }
+
+  /** how close to a citizen the pointer has to be, scaled by zoom */
+  pickRadius() { return 0.2 + this.view.rig.dist * 0.0085; }
 
   // ------------------------------------------------------------------ keys
 
@@ -366,6 +403,7 @@ export class Tools {
       case 'Digit5': this.select('park'); break;
       case 'Digit6': this.select('arena'); break;
       case 'Digit7': this.select('bulldoze'); break;
+      case 'Digit8': this.select('service'); break;
       case 'BracketRight': if (this.tool === 'transit') this.cycleMode(1); break;
       case 'BracketLeft': if (this.tool === 'transit') this.cycleMode(-1); break;
       case 'Space': e.preventDefault(); this.app.togglePause(); break;
@@ -373,6 +411,8 @@ export class Tools {
       case 'Minus': case 'NumpadSubtract': this.app.setSpeed(g.speed <= 1 ? 1 : g.speed / 2); break;
       case 'KeyL': this.app.panels.toggle('lines'); break;
       case 'KeyP': this.app.panels.toggle('policies'); break;
+      case 'KeyC': this.app.panels.toggle('citizens'); break;
+      case 'KeyB': this.app.panels.toggle('company'); break;
       case 'KeyT': this.app.hud.setOverlay(this.view.mode === 'transit' ? 'none' : 'transit'); break;
       case 'KeyG': this.app.hud.setOverlay(this.view.mode === 'traffic' ? 'none' : 'traffic'); break;
       case 'KeyH': this.app.hud.setOverlay(this.view.mode === 'happy' ? 'none' : 'happy'); break;
@@ -400,7 +440,7 @@ export class Tools {
     if (k.has('KeyS') || k.has('ArrowDown')) f -= 1;
     if (k.has('KeyD') || k.has('ArrowRight')) r += 1;
     if (k.has('KeyA') || k.has('ArrowLeft')) r -= 1;
-    if (f || r) this.view.rig.move(f, r, dt);
+    if (f || r) { this.view.rig.move(f, r, dt); if (this.view.follow) this.app.stopFollow(); }
     if (k.has('KeyQ')) this.view.rig.rotate(-dt * 1.6);
     if (k.has('KeyE')) this.view.rig.rotate(dt * 1.6);
     if (k.has('KeyR')) this.view.rig.rotate(0, dt * 0.9);
@@ -426,12 +466,14 @@ export class Tools {
     const dragging = !!this.drag;
     switch (this.tool) {
       case 'inspect': {
-        if (hv >= 0 && !this.pan) {
+        const near = hv >= 0 && !this.pan && this.hover ? v.citizens.pick(this.hover.x, this.hover.z, this.pickRadius()) : null;
+        if (near) {
+          this.tip = { text: `${near.first} ${near.last}`, sub: g.city.activityOf(near, g.hour) };
+        } else if (hv >= 0 && !this.pan) {
           const b = g.buildingAt(hv);
           if (b) {
             cursors.push({ tile: hv, style: 'info' });
-            const names = { res: ['House', 'Apartments', 'Tower'], com: ['Shop', 'Offices', 'Skyscraper'], ind: ['Workshop', 'Factory', 'Plant'] };
-            this.tip = { text: b.special === 'arena' ? 'Arena' : names[b.kind][b.level - 1], sub: b.kind === 'res' ? `${b.residents.length} residents` : `${b.workers.length} / ${b.cap} workers` };
+            this.tip = { text: b.kind === 'res' ? venueLabel(b) : b.name, sub: b.kind === 'res' ? `${b.residents.length} residents` : `${venueLabel(b)} · ${b.workers.length} / ${b.cap} staff` };
           } else if (w.stop[hv] >= 0) {
             const s = g.transit.stopById.get(w.stop[hv])!;
             cursors.push({ tile: hv, style: 'info' });
@@ -465,6 +507,17 @@ export class Tools {
         }
         break;
       }
+      case 'service': {
+        if (hv >= 0) {
+          const def = SERVICE[this.service];
+          const rf = g.city.roadFor({ x: tileX(hv), y: tileY(hv) });
+          const ok = w.isUnlocked(hv) && !w.water[hv] && w.isEmpty(hv) && !w.rail[hv] && rf.tile >= 0;
+          cursors.push({ tile: hv, style: ok ? 'ok' : 'bad' });
+          if (ok) rings.push({ x: wx(tileX(hv)), z: wz(tileY(hv)), r: this.service === 'school' ? 18 : 14, color: 0x4ade80, alpha: 0.3, fill: 1, pulse: 0 });
+          this.quote = { text: money(def.cost), ok: ok && g.money >= def.cost, reason: ok ? (g.money >= def.cost ? undefined : 'Not enough money') : 'Needs empty ground beside a road' };
+        }
+        break;
+      }
       case 'park': case 'bulldoze': {
         if (hv >= 0) {
           const ok = this.tool === 'park' ? (w.isUnlocked(hv) && !w.water[hv] && w.isEmpty(hv) && !w.rail[hv]) : (w.isUnlocked(hv) && (w.bld[hv] >= 0 || w.road[hv] > 0 || w.park[hv] > 0 || w.stop[hv] >= 0));
@@ -480,6 +533,10 @@ export class Tools {
         const d = this.draft;
         const color = d?.extend ? d.extend.color : m.color;
         const base: number[] = d?.extend && !d.tiles.length ? d.extend.stops.map((s) => s.tile) : d?.tiles ?? [];
+        if (isCargoMode(mode)) for (const b of g.city.cargoSites()) {
+          if (!isIndustry(b.special)) continue;
+          rings.push({ x: wx(b.x), z: wz(b.y), r: CATCH, color: 0xd9a441, alpha: 0.28, fill: 1, pulse: 0 });
+        }
         if (mode === 'ferry') for (let i = 0; i < N * N; i++) if (w.shore[i] && !g.spotCheck('ferry', i) && !base.includes(i)) cursors.push({ tile: i, style: 'info' });
         for (const t of base) { cursors.push({ tile: t, style: 'gold' }); rings.push({ x: wx(tileX(t)), z: wz(tileY(t)), r: rad, color, alpha: 0.5, fill: 1, pulse: 0 }); }
         if (hv >= 0) {
@@ -508,7 +565,7 @@ export class Tools {
           else if (!ok && this.quote) this.quote.ok = false;
           cursors.push({ tile: hv, style: ok ? 'ok' : 'bad' });
           if (ok) rings.push({ x: wx(tileX(hv)), z: wz(tileY(hv)), r: rad, color: 0x4ade80, alpha: 0.55, fill: 1, pulse: 0 });
-          if (track.length && mode !== 'bus') this.drawTrack(mode, track, ok ? color : 0xff5a5a);
+          if (track.length && !isRoadMode(mode)) this.drawTrack(mode, track, ok ? color : 0xff5a5a);
           else this.view.overlay.removeRoute('draftHover');
           this.drawDraft(mode, base, hv, ok, color);
         } else this.drawDraft(mode, base, -1, false, color);
@@ -527,7 +584,7 @@ export class Tools {
     this.app.hud.updateHoverTip();
   }
 
-  private routeY(mode: Mode) { return mode === 'metro' ? TRACK_Y + 0.07 : mode === 'tram' ? 0.075 : mode === 'ferry' ? -0.06 : mode === 'gondola' ? 0.9 : 0.07; }
+  private routeY(mode: Mode) { return mode === 'metro' || mode === 'freight' ? TRACK_Y + 0.07 : mode === 'tram' ? 0.075 : mode === 'ferry' ? -0.06 : mode === 'gondola' ? 0.9 : 0.07; }
 
   private drawTrack(mode: Mode, tiles: number[], color: number) {
     const pts: { x: number; z: number }[] = [];
@@ -541,7 +598,7 @@ export class Tools {
     this.draftKey = key;
     const ov = this.view.overlay, g = this.game;
     ov.removeRoute('draft');
-    if (mode !== 'bus') {
+    if (!isRoadMode(mode)) {
       if (hv < 0 || !ok) ov.removeRoute('draftHover');
       if (base.length >= 2) {
         const q = g.transit.planTrack(mode, base, g.transit.nextLineId);

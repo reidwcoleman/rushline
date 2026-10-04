@@ -1,10 +1,12 @@
 // HUD: top bar, toolbar, overlay switch, speed, toasts, context card and world-anchored labels.
 import * as THREE from 'three';
 import { h, icon, clear, money, fmt, clock } from './dom.ts';
-import { COST, GOALS, UNLOCK } from '../sim/game.ts';
+import { COST, GOALS, UNLOCK, SERVICE } from '../sim/game.ts';
+import { moodColorHex, fullName } from '../sim/people.ts';
+import { CARGO_INFO, CARGO_LIST, isIndustry, sellsIdx, FACILITY } from '../sim/industry.ts';
 import { DAY, hourOf, dayOf } from '../sim/types.ts';
 import { wx, wz, DS, DN } from '../sim/world.ts';
-import { MODES, MODE_ORDER, type Mode } from '../sim/modes.ts';
+import { MODES, MODE_ORDER, CARGO_ORDER, type Mode } from '../sim/modes.ts';
 import type { App } from './app.ts';
 import type { ToolId } from './tools.ts';
 import type { OverlayMode } from '../render/view.ts';
@@ -13,10 +15,11 @@ const TOOLS: { id: ToolId; icon: string; label: string; sub: string; key: string
   { id: 'inspect', icon: 'inspect', label: 'Inspect', sub: 'Click anything to see how it is doing', key: '1' },
   { id: 'road', icon: 'road', label: 'Road', sub: `Drag to build · ${money(COST.street)} a tile`, key: '2' },
   { id: 'avenue', icon: 'avenue', label: 'Avenue', sub: `Twice the lanes · ${money(COST.avenue)} a tile`, key: '3' },
-  { id: 'transit', icon: 'bus', label: 'Transit line', sub: 'Bus, tram, metro, ferry, gondola', key: '4' },
+  { id: 'transit', icon: 'bus', label: 'Transit line', sub: 'Bus, tram, metro, ferry, gondola, freight', key: '4' },
   { id: 'park', icon: 'park', label: 'Park', sub: `Calms the neighbourhood · ${money(COST.park)}`, key: '5' },
   { id: 'arena', icon: 'arena', label: 'Arena', sub: `Match days pack the roads · ${money(COST.arena)}`, key: '6' },
   { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '7' },
+  { id: 'service', icon: 'school', label: 'Services', sub: 'Schools and clinics', key: '8' },
 ];
 
 export class Hud {
@@ -33,11 +36,17 @@ export class Hud {
   private legend!: HTMLElement;
   private stopLbl = new Map<number, HTMLElement>();
   private distLbl = new Map<number, HTMLElement>();
+  private cargoLbl = new Map<number, HTMLElement>();
   private acc = 0;
   private tmpV = new THREE.Vector3();
   private lastStab = 100;
   private moneyShown = 0;
   private advisor!: HTMLElement;
+  private ticker!: HTMLElement;
+  private tickQ: { id: number; pid: number; text: string; tone: string }[] = [];
+  private tickUntil = 0;
+  private tickCur = 0;
+  private personLbl: HTMLElement | null = null;
   private advKey = '';
 
   constructor(readonly app: App, root: HTMLElement) {
@@ -91,7 +100,9 @@ export class Hud {
     const mk = (ic: string, label: string, sub: string, fn: () => void, key: string) => h('button', { class: 'tool', onClick: fn }, icon(ic), h('span', { class: 'key' }, key), h('span', { class: 'tip' }, label, h('small', {}, sub)));
     e.linesBtn = mk('lines', 'Lines', 'Every line you run', () => this.app.panels.toggle('lines'), 'L');
     e.polBtn = mk('policy', 'Policies', 'City-wide rules', () => this.app.panels.toggle('policies'), 'P');
-    tb.append(e.linesBtn, e.polBtn);
+    e.citBtn = mk('people', 'Citizens', 'Who lives here and what they want', () => this.app.panels.toggle('citizens'), 'C');
+    e.coBtn = mk('company', 'Company', 'Books, fleet and research', () => this.app.panels.toggle('company'), 'B');
+    tb.append(e.linesBtn, e.polBtn, e.citBtn, e.coBtn);
     r.append(tb);
 
     // ---------- overlay dock
@@ -103,7 +114,7 @@ export class Hud {
       dock.append(b);
     }
     r.append(dock);
-    this.legend = h('div', { class: 'glass', style: { position: 'absolute', left: '16px', bottom: '70px', padding: '8px 12px', fontSize: '12px', fontWeight: '600', color: 'var(--text-2)', display: 'none', gap: '10px', alignItems: 'center', borderRadius: '12px' } });
+    this.legend = h('div', { class: 'glass', style: { position: 'absolute', left: '16px', bottom: '118px', padding: '8px 12px', fontSize: '12px', fontWeight: '600', color: 'var(--text-2)', display: 'none', gap: '10px', alignItems: 'center', borderRadius: '12px' } });
     r.append(this.legend);
 
     // ---------- speed dock
@@ -118,6 +129,8 @@ export class Hud {
     }
     r.append(sd);
 
+    this.ticker = h('button', { class: 'ticker glass', onClick: () => { const it = (this.ticker as any)._pid; const p = this.app.game.city.personById.get(it); if (p) this.app.selectPerson(p, true); } });
+    r.append(this.ticker);
     this.advisor = h('div', { class: 'advisor glass', style: { display: 'none' } });
     r.append(this.advisor);
     this.toasts = h('div', { class: 'toasts' });
@@ -153,7 +166,7 @@ export class Hud {
     const g = this.app.game;
     for (const [id, b] of this.toolBtns) {
       b.classList.toggle('on', this.app.tools.tool === id);
-      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'arena' && !g.unlocked.arena));
+      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'arena' && !g.unlocked.arena) || (id === 'service' && !g.unlocked.school));
     }
     // the transit button wears the icon of the mode in hand
     const tb = this.toolBtns.get('transit');
@@ -209,7 +222,12 @@ export class Hud {
   private modeChips(): HTMLElement {
     const t = this.app.tools;
     const row = h('div', { class: 'mode-row' });
-    for (const m of MODE_ORDER) {
+    const g = this.app.game;
+    const grp = h('div', { class: 'grpseg' },
+      h('button', { class: 'tab' + (t.group === 'people' ? ' on' : ''), onClick: () => t.setGroup('people') }, icon('people'), 'People'),
+      h('button', { class: 'tab' + (t.group === 'cargo' ? ' on' : '') + (g.unlocked.truck ? '' : ' lock'), title: g.unlocked.truck ? 'Haul food, stone and goods' : `Freight unlocks at ${MODES.truck.unlock} residents`, onClick: () => t.setGroup('cargo') }, icon(g.unlocked.truck ? 'cargo' : 'lock'), 'Freight'));
+    row.append(grp);
+    for (const m of t.group === 'cargo' ? CARGO_ORDER : MODE_ORDER) {
       const def = MODES[m];
       const open = t.modeUnlocked(m);
       const chip = h('button', { class: 'mchip' + (t.mode === m ? ' on' : '') + (open ? '' : ' lock'), title: open ? def.tag : `Unlocks at ${def.unlock} residents`, onClick: () => t.setMode(m) },
@@ -224,7 +242,7 @@ export class Hud {
     const t = this.app.tools, g = this.app.game;
     let key: string = t.tool;
     const d = t.draft;
-    const sig = `${t.tool}|${t.mode}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
+    const sig = `${t.tool}|${t.mode}|${t.group}|${g.unlocked.truck}${g.unlocked.freight}|${t.service}|${g.unlocked.school}${g.unlocked.clinic}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
     if (!force && sig === this.ctxSig && this.context) return;
     this.ctxSig = sig;
     let node: HTMLElement | null = null;
@@ -260,6 +278,20 @@ export class Hud {
         h('div', { class: 'trow' },
           h('div', { class: 'sw', style: { background: hexc(m.color) } }),
           h('div', { class: 't' }, h('b', {}, `${m.label} · from ${money(m.baseCost + m.stopCost * 2)}`), h('span', {}, `${m.tag} ${m.how}`)),
+          h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
+    } else if (t.tool === 'service') {
+      key += 'svc' + t.service;
+      const row = h('div', { class: 'mode-row' });
+      for (const k of ['school', 'clinic'] as const) {
+        const open = g.unlocked[k];
+        const chip = h('button', { class: 'mchip' + (t.service === k ? ' on' : '') + (open ? '' : ' lock'), onClick: () => t.setService(k) }, icon(open ? k : 'lock'), h('span', {}, SERVICE[k].label), open ? null : h('small', {}, String(SERVICE[k].unlock)));
+        chip.style.setProperty('--mc', k === 'school' ? '#f2b84b' : '#3aa7a0');
+        row.append(chip);
+      }
+      const sd = SERVICE[t.service];
+      node = h('div', { class: 'context glass tcontext' }, row,
+        h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: t.service === 'school' ? '#f2b84b' : '#3aa7a0' } }),
+          h('div', { class: 't' }, h('b', {}, `${sd.label} · ${money(sd.cost)}`), h('span', {}, `${sd.tag} Click empty ground beside a road.`)),
           h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
     } else if (t.tool !== 'inspect') {
       const def = TOOLS.find((x) => x.id === t.tool)!;
@@ -357,7 +389,27 @@ export class Hud {
     this.moveTip();
     if (this.acc > 0.2) { this.acc = 0; this.refreshNumbers(); this.refreshAdvice(); }
     this.updateLabels();
+    this.updateTicker();
     void g;
+  }
+
+  pushTick(it: { id: number; pid: number; text: string; tone: string }) {
+    this.tickQ.push(it);
+    if (this.tickQ.length > 4) this.tickQ.splice(0, this.tickQ.length - 2);
+  }
+  private updateTicker() {
+    const now = performance.now();
+    const t = this.ticker;
+    if (this.tickCur && now > this.tickUntil) { t.classList.remove('show'); this.tickCur = 0; this.tickUntil = now + 450; }
+    if (!this.tickCur && this.tickQ.length && now > this.tickUntil && !this.app.modal && !this.app.game.over) {
+      const it = this.tickQ.shift()!;
+      this.tickCur = it.id;
+      (t as any)._pid = it.pid;
+      clear(t);
+      t.className = `ticker glass show ${it.tone}`;
+      t.append(h('i'), it.text);
+      this.tickUntil = now + (this.tickQ.length > 1 ? 4200 : 7500);
+    }
   }
 
   private refreshNumbers() {
@@ -442,6 +494,53 @@ export class Hud {
       el.style.left = '0'; el.style.top = '0';
     }
     for (const [id, el] of this.stopLbl) if (!seen.has(id)) { el.remove(); this.stopLbl.delete(id); }
+    // cargo tags over industries (and shops while planning freight)
+    const cargoMode = (app.tools.tool === 'transit' && app.tools.group === 'cargo') || v.mode === 'transit';
+    const seenC = new Set<number>();
+    for (const b of g.city.cargoSites()) {
+      const ind = isIndustry(b.special);
+      const focus = (sel?.type === 'building' && sel.id === b.id) || hoverTile === b.tile;
+      if (!focus && !(cargoMode && (ind || app.tools.group === 'cargo'))) continue;
+      const p = rig.toScreen(this.tmpV.set(wx(b.x), v.buildings.heightOf(b) + 0.18, wz(b.y)));
+      if (!p.visible || p.x < -60 || p.x > innerWidth + 60 || p.y < -20 || p.y > innerHeight + 20) continue;
+      seenC.add(b.id);
+      let el = this.cargoLbl.get(b.id);
+      if (!el) { el = h('div', { class: 'lbl' }); this.cargoLbl.set(b.id, el); this.labels.append(el); }
+      const bits: { c: number; t: string }[] = [];
+      if (ind) {
+        const F = FACILITY[b.special as keyof typeof FACILITY];
+        if (F.makes >= 0) bits.push({ c: CARGO_INFO[CARGO_LIST[F.makes]].color, t: `${Math.floor(b.out[F.makes])}` });
+        if (F.takes.length && b.special !== 'terminal') bits.push({ c: CARGO_INFO[CARGO_LIST[F.takes[0]]].color, t: `${Math.floor(b.stock[F.takes[0]])} in` });
+      } else { const i = sellsIdx(b); if (i >= 0) bits.push({ c: CARGO_INFO[CARGO_LIST[i]].color, t: `${Math.floor(b.stock[i])}` }); }
+      const low = !ind && bits.length && b.stock[sellsIdx(b)] < 3;
+      const key = `${b.name}|${bits.map((x) => x.t).join(',')}|${ind}|${low}`;
+      if ((el as any)._k !== key) {
+        (el as any)._k = key; clear(el);
+        const t = h('div', { class: 'tag cargo' + (low ? ' low' : '') });
+        if (ind) t.append(b.name);
+        for (const bt of bits) t.append(h('i', { style: { background: '#' + bt.c.toString(16).padStart(6, '0') } }), h('b', {}, bt.t));
+        if (!ind && !bits.length) t.append(b.name);
+        el.append(t);
+      }
+      el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+      el.style.left = '0'; el.style.top = '0';
+    }
+    for (const [id, el] of this.cargoLbl) if (!seenC.has(id)) { el.remove(); this.cargoLbl.delete(id); }
+    // thought bubble over the citizen being watched
+    const fp = v.focusPerson;
+    if (fp && !fp.dead && !app.panels.open) {
+      const wp = v.citizens.where(fp);
+      const sp = rig.toScreen(this.tmpV.set(wp.x, wp.y + 0.55, wp.z));
+      if (sp.visible && sp.x > 0 && sp.x < innerWidth && sp.y > 0 && sp.y < innerHeight) {
+        if (!this.personLbl) { this.personLbl = h('div', { class: 'lbl' }); this.labels.append(this.personLbl); }
+        const el = this.personLbl;
+        const th = g.city.thoughtOf(fp);
+        const key = fp.id + '|' + th;
+        if ((el as any)._k !== key) { (el as any)._k = key; clear(el); el.append(h('div', { class: 'bubble' }, h('b', {}, fullName(fp)), h('span', {}, th))); }
+        el.style.transform = `translate(${sp.x}px, ${sp.y}px) translate(-50%, -100%)`;
+        el.style.left = '0'; el.style.top = '0';
+      } else if (this.personLbl) { this.personLbl.remove(); this.personLbl = null; }
+    } else if (this.personLbl) { this.personLbl.remove(); this.personLbl = null; }
     // district purchase pills
     const w = g.world;
     const shown = new Set<number>();
@@ -474,6 +573,6 @@ export class Hud {
       el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
     }
     for (const [id, el] of this.distLbl) if (!shown.has(id)) { el.remove(); this.distLbl.delete(id); }
-    void UNLOCK; void wx; void wz;
+    void UNLOCK; void wx; void wz; void moodColorHex;
   }
 }

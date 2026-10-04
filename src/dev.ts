@@ -85,3 +85,38 @@ export function addModes(g: Game) {
   }
   return out;
 }
+
+/** build a few freight lines between the starting industries (for screenshots and tests) */
+export function addFreight(g: Game) {
+  g.money = Math.max(g.money, 200000);
+  g.unlocked.truck = true; g.unlocked.freight = true;
+  const sites = g.city.cargoSites();
+  const ind = (k: string) => sites.find((b) => b.special === k);
+  const farm = ind('farm'), quarry = ind('quarry'), fac = ind('factory'), term = ind('terminal');
+  const out: Record<string, number | null> = {};
+  if (!farm || !quarry || !fac || !term) return out;
+  const near = (b: { x: number; y: number }, mode: 'truck' | 'freight') => {
+    let best = -1, bd = 99;
+    for (let y = b.y - 3; y <= b.y + 3; y++) for (let x = b.x - 3; x <= b.x + 3; x++) {
+      if (x < 0 || y < 0 || x >= 40 || y >= 40) continue;
+      const t = y * 40 + x;
+      if (g.spotCheck(mode, t)) continue;
+      if (mode === 'truck' && g.roadDegree(t) >= 3) continue;
+      const d = Math.hypot(x - b.x, y - b.y);
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best;
+  };
+  const shops = sites.filter((b) => b.kind === 'com' && !b.special).sort((a, b) => Math.hypot(a.x - farm.x, a.y - farm.y) - Math.hypot(b.x - farm.x, b.y - farm.y));
+  const mk = (key: string, mode: 'truck' | 'freight', bs: { x: number; y: number }[], n = 2) => {
+    const tiles = bs.map((b) => near(b, mode));
+    if (tiles.some((t) => t < 0)) { out[key] = null; return; }
+    const r = g.createLine(mode, tiles);
+    if (r.ok && r.line) { for (let i = 1; i < n; i++) g.addVehicle(r.line); out[key] = r.line.id; } else out[key] = null;
+  };
+  mk('farmShop', 'truck', [farm, shops[0] ?? term]);
+  mk('quarryFactory', 'truck', [quarry, fac]);
+  mk('factoryTerminal', 'truck', [fac, term]);
+  mk('rail', 'freight', [quarry, term], 2);
+  return out;
+}

@@ -1,24 +1,39 @@
 // The game: owns the world, traffic, transit and city; handles commands, money, events and the stability meter.
-import { World, N, DX, DY, tileIdx, tileX, tileY, inMap, DN, DS, distIdx } from './world.ts';
+import { World, N, DX, DY, tileIdx, tileX, tileY, inMap, DN, DS, distIdx, wx, wz } from './world.ts';
 import { Traffic } from './traffic.ts';
 import { Transit } from './transit.ts';
-import { MODES, MODE_ORDER, isSolidCode, type Mode } from './modes.ts';
+import { MODES, MODE_ORDER, isSolidCode, isRoadMode, isCargoMode, type Mode } from './modes.ts';
+import { CARGO_INFO, CARGO_LIST, FACILITY, isIndustry, room } from './industry.ts';
 import { advise, autoLine, type Advice } from './advisor.ts';
 import { City, defaultPolicies, type Policies } from './city.ts';
 import { mulberry32, clamp, type Rng } from './util.ts';
 import { CITY_NAMES } from './names.ts';
-import { DAY, dayOf, hourOf, type Ctx, type Building, type Stop, type Line } from './types.ts';
+import { feel, moodOf, TRAITS } from './people.ts';
+import { DAY, dayOf, hourOf, type Ctx, type Building, type Stop, type Line, type Person, type Household, type Carrier } from './types.ts';
 
 export const COST = {
   arena: 6000, street: 12, avenue: 38, upgrade: 28, bridge: 60, park: 140, busStop: 80, bus: 200, station: 1000, track: 70, trackWater: 60, train: 900,
   bulldoze: 25, expandBus: 220, expandStation: 600,
 };
-export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4 };
+export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4, school: 22, clinic: 30 };
+export const SERVICE = {
+  school: { cost: 3800, unlock: 260, label: 'School', tag: 'Pupils walk or ride in every morning. Families want one close.' },
+  clinic: { cost: 4800, unlock: 520, label: 'Clinic', tag: 'Keeps seniors healthy and comfortable. Check-ups send people across town.' },
+} as const;
+export type ServiceKind = keyof typeof SERVICE;
 
 export const MAX_LINES = 14;
-export const UNLOCK = { avenue: 200, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600 };
+export const UNLOCK = { avenue: 200, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
 
 export interface Cmd { ok: boolean; msg?: string; cost?: number }
+
+export interface DayBook { day: number; inc: Record<string, number>; exp: Record<string, number> }
+export const RESEARCH_COST = [2600, 6200, 14500];
+export const RESEARCH_DAYS = [1.6, 2.6, 4];
+export const MODE_RESEARCH_MUL: Record<Mode, number> = { bus: 1, tram: 1.3, metro: 1.8, ferry: 1.2, gondola: 1.1, truck: 1.1, freight: 1.7 };
+export const FARE_STEPS = [0, 0.5, 1, 1.5, 2.2];
+export const researchCost = (mode: Mode, lvl: number) => Math.round(RESEARCH_COST[lvl] * MODE_RESEARCH_MUL[mode]);
+export const loanLimit = (bestPop: number) => Math.min(90000, Math.round((3000 + bestPop * 9) / 500) * 500);
 
 export interface Goal { pop: number; reward: number; title: string }
 export const GOALS: Goal[] = [
@@ -54,6 +69,15 @@ export class Game {
   // accounting
   dayIncome = 0;
   dayExpense = 0;
+  book: DayBook = { day: 1, inc: {}, exp: {} };
+  bookHist: DayBook[] = [];
+  loan = 0;
+  maint = 1;                       // 0 skimp, 1 standard, 2 thorough
+  autoRenew = false;
+  research: Record<Mode, number> = { bus: 0, tram: 0, metro: 0, ferry: 0, gondola: 0, truck: 0, freight: 0 };
+  project: { mode: Mode; lvl: number; done: number; start: number } | null = null;
+  breakdowns = 0;
+  private lastBreak = -999;
   lastIncome = 0;
   lastExpense = 0;
   taxRate = 1;
@@ -81,7 +105,7 @@ export class Game {
   private stabT = 0;
   lastDay = 1;
   daysSurvived = 0;
-  unlocked = { avenue: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false };
+  unlocked = { avenue: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false, school: false, clinic: false, truck: false, freight: false };
   match: { tile: number; start: number; end: number; announced: boolean; started: boolean } | null = null;
   nextMatchDay = 0;
 
@@ -93,6 +117,7 @@ export class Game {
   dismissed = new Set<string>();
   private adviceT = 0;
   private fleetT = 0;
+  private renewT = 0;
   autopilotLog = 0;
 
   constructor(seed = 1, opts: { start?: boolean; diff?: number } = {}) {
@@ -112,6 +137,12 @@ export class Game {
       fare: (a) => this.earn(a, 'fare'),
       toast: (m, tone) => this.toast(m, tone),
       free: () => this.policies.freeTransit,
+      maint: () => this.maint,
+      level: (m) => this.research[m] ?? 0,
+      spend: (a, why) => this.spend(a, why),
+      breakdown: (c, x, z) => this.onBreakdown(c, x, z),
+      sites: (x, z) => this.city.sitesNear(x, z),
+      cargoPay: (a) => this.earn(a, 'cargo'),
     };
     this.city.onFee = (a, why) => this.earn(a, why);
     this.money = [14000, 9500, 6500][this.diff];
@@ -198,9 +229,11 @@ export class Game {
     for (const b of this.city.buildings.values()) {
       if (b.kind !== 'res') continue;
       const n = Math.max(2, Math.floor(b.cap * (0.6 + this.rand() * 0.4)));
-      for (let k = 0; k < n; k++) this.city.createPerson(b);
+      this.city.fillHome(b, n);
     }
-    for (const p of this.city.persons) this.city.assignJob(p);
+    for (const p of this.city.persons) this.city.occupy(p);
+    this.city.spawnIndustries(cx, cy);
+    for (const p of this.city.persons) if (!p.work) this.city.occupy(p);
     this.city.updateStats();
     this.updateUnlocks(true);
     this.emit('roadsChanged');
@@ -246,8 +279,119 @@ export class Game {
       this.lastDay = d;
       this.lastIncome = this.dayIncome; this.lastExpense = this.dayExpense;
       this.dayIncome = 0; this.dayExpense = 0;
+      this.closeBooks();
       this.daysSurvived = d - 1;
       this.emit('dayEnd', d);
+    }
+  }
+
+  // ---------------------------------------------------------------- company
+
+  private closeBooks() {
+    // the day's interest, lines settle their day, then a fresh page
+    if (this.loan > 0) this.spend(Math.round(this.loan * 0.007), 'interest');
+    const imp = this.city.takeImports();
+    if (imp > 0.5) this.spend(imp * 0.55, 'imports');
+    for (const l of this.transit.lines) {
+      l.hist.push({ rev: l.dayRev, cost: l.dayCost });
+      if (l.hist.length > 7) l.hist.shift();
+      l.dayRev = 0; l.dayCost = 0;
+    }
+    this.bookHist.push(this.book);
+    if (this.bookHist.length > 30) this.bookHist.shift();
+    this.book = { day: this.day, inc: {}, exp: {} };
+    // research
+    const pr = this.project;
+    if (pr && this.t >= pr.done) {
+      this.research[pr.mode] = pr.lvl + 1;
+      this.project = null;
+      this.toast(`${MODES[pr.mode].label} research finished: ${MODES[pr.mode].models[pr.lvl + 1]}. New ${MODES[pr.mode].vehicles} are bigger and more reliable.`, 'good');
+      this.emit('sfx', 'unlock');
+      this.emit('research', pr.mode);
+    }
+  }
+
+  /** what the whole operation is worth */
+  assets(): number {
+    let a = 0;
+    for (const l of this.transit.lines) {
+      const m = MODES[l.kind];
+      for (const c of l.vehicles) a += this.transit.vehicleCost(l) * 0.5 * (0.4 + 0.6 * c.cond);
+      a += (l.kind === 'gondola' ? this.transit.lineLength(l) : l.tiles.length) * m.trackCost * 0.5;
+    }
+    for (const s of this.transit.stops) a += MODES[s.kind].stopCost * 0.6;
+    return a;
+  }
+  netWorth() { return this.money - this.loan + this.assets(); }
+  loanLimit() { return loanLimit(this.bestPop); }
+
+  takeLoan(amount: number): Cmd {
+    const room = this.loanLimit() - this.loan;
+    if (room < 500) return { ok: false, msg: 'The bank will not lend you more right now.' };
+    const a = Math.min(amount, room);
+    this.loan += a; this.money += a;
+    this.emit('sfx', 'unlock');
+    return { ok: true, cost: a };
+  }
+  repayLoan(amount: number): Cmd {
+    const a = Math.min(amount, this.loan, Math.max(0, this.money));
+    if (a < 1) return { ok: false, msg: this.loan ? 'Not enough cash to repay.' : 'No loan to repay.' };
+    this.loan -= a; this.money -= a;
+    this.emit('sfx', 'click');
+    return { ok: true, cost: a };
+  }
+
+  setFare(line: Line, mul: number): Cmd {
+    line.fareMul = mul;
+    this.emit('linesChanged');
+    this.emit('sfx', 'click');
+    return { ok: true };
+  }
+  setMaintenance(level: number) { this.maint = Math.max(0, Math.min(2, level)); this.emit('sfx', 'click'); this.emit('policy', 'maint'); }
+
+  startResearch(mode: Mode): Cmd {
+    if (this.project) return { ok: false, msg: 'The lab is already working on something.' };
+    const lvl = this.research[mode];
+    if (lvl >= 3) return { ok: false, msg: `${MODES[mode].label} is fully researched.` };
+    if (this.bestPop < 300) return { ok: false, msg: 'Research opens at 300 residents.' };
+    const cost = researchCost(mode, lvl);
+    if (this.money < cost) return { ok: false, msg: 'Not enough money. Need $' + cost.toLocaleString() + '.' };
+    this.spend(cost, 'research');
+    this.project = { mode, lvl, start: this.t, done: this.t + DAY * RESEARCH_DAYS[lvl] };
+    this.emit('sfx', 'build');
+    this.emit('research', mode);
+    return { ok: true, cost };
+  }
+
+  renewCost(c: Carrier) { return Math.round(this.transit.vehicleCost(c.line) * 0.55); }
+  renewVehicle(c: Carrier): Cmd {
+    const cost = this.renewCost(c);
+    if (this.money < cost) return { ok: false, msg: 'Not enough money.' };
+    this.spend(cost, 'vehicles');
+    this.transit.renew(c);
+    this.emit('linesChanged');
+    this.emit('sfx', 'build');
+    return { ok: true, cost };
+  }
+  /** swap every worn or old-model vehicle on a line for the current generation */
+  renewLine(line: Line, onlyWorn = true): Cmd {
+    let n = 0, total = 0;
+    for (const c of line.vehicles) {
+      const old = this.transit.ageDays(c) > MODES[line.kind].life || c.cond < 0.5 || c.lvl < this.research[line.kind];
+      if (onlyWorn && !old) continue;
+      const r = this.renewVehicle(c);
+      if (!r.ok) break;
+      n++; total += r.cost ?? 0;
+    }
+    return n ? { ok: true, cost: total, msg: `Renewed ${n} ${n === 1 ? MODES[line.kind].vehicle : MODES[line.kind].vehicles}.` } : { ok: false, msg: 'Nothing needs renewing.' };
+  }
+
+  private onBreakdown(c: Carrier, x: number, z: number) {
+    this.breakdowns++;
+    this.emit('breakdown', { x, z, kind: c.line.kind });
+    if (this.t - this.lastBreak > DAY * 0.4) {
+      this.lastBreak = this.t;
+      this.toast(`A ${MODES[c.line.kind].vehicle} on ${c.line.name} broke down. Renew old ${MODES[c.line.kind].vehicles} or service them more.`, 'warn');
     }
   }
 
@@ -257,11 +401,14 @@ export class Game {
     this.money += a;
     this.dayIncome += a;
     if (why === 'fare') this.fareAcc += a;
+    const cat = why === 'fare' ? 'fares' : why === 'toll' || why === 'shopping' || why === 'match' ? 'fees' : why === 'tax' ? 'taxes' : why || 'other';
+    this.book.inc[cat] = (this.book.inc[cat] ?? 0) + a;
   }
   fareAcc = 0;
-  spend(a: number) {
+  spend(a: number, why = 'build') {
     this.money -= a;
     this.dayExpense += a;
+    this.book.exp[why] = (this.book.exp[why] ?? 0) + a;
   }
 
   private economy(dt: number) {
@@ -269,9 +416,10 @@ export class Game {
     // taxes per second: employed residents pay full, others a little; unhappy people evade
     let tax = 0;
     const scale = 1 / (1 + s.pop / 5500);
-    for (const p of this.city.persons) tax += (p.work ? 0.036 : 0.008) * (0.55 + 0.45 * p.sat) * scale;
+    for (const p of this.city.persons) tax += (p.stage === 'adult' ? (p.work ? 0.0026 * p.wage : 0.008) : 0.004) * (0.55 + 0.45 * feel(p)) * scale;
     tax *= this.taxRate * (this.policies.remote ? 0.97 : 1);
     this.money += tax * dt; this.dayIncome += tax * dt;
+    this.book.inc.taxes = (this.book.inc.taxes ?? 0) + tax * dt;
     // upkeep
     const w = this.world;
     let up = 0;
@@ -281,10 +429,14 @@ export class Game {
       if (w.park[i]) up += UPKEEP.park;
     }
     for (const sp of this.transit.stops) up += MODES[sp.kind].upStop;
+    const mf = [0.75, 1, 1.35][this.maint];
     for (const l of this.transit.lines) {
       const m = MODES[l.kind];
-      up += l.vehicles.length * m.upVeh + (l.kind === 'gondola' ? this.transit.lineLength(l) : l.tiles.length) * m.upTrack;
+      const lc = (l.vehicles.length * m.upVeh * mf + (l.kind === 'gondola' ? this.transit.lineLength(l) : l.tiles.length) * m.upTrack) * (1 + 0.1 * this.research[l.kind]);
+      l.dayCost += lc / DAY * dt;
+      up += lc;
     }
+    for (const b of this.city.buildings.values()) if (b.special === 'school') up += UPKEEP.school; else if (b.special === 'clinic') up += UPKEEP.clinic;
     if (this.policies.toll) up += 20;
     if (this.policies.busLanes) up += 30;
     if (this.policies.stagger) up += 25;
@@ -292,6 +444,7 @@ export class Game {
     if (this.policies.remote) up += 25;
     const perSec = up / DAY;
     this.money -= perSec * dt; this.dayExpense += perSec * dt;
+    this.book.exp.upkeep = (this.book.exp.upkeep ?? 0) + perSec * dt;
     this.incomeRate += (tax + this.fareAcc / dt - this.incomeRate) * 0.1;
     this.fareAcc = 0;
     this.expenseRate += (perSec - this.expenseRate) * 0.1;
@@ -299,7 +452,7 @@ export class Game {
     // goals
     if (this.goalIdx < GOALS.length && s.pop >= GOALS[this.goalIdx].pop) {
       const g = GOALS[this.goalIdx++];
-      this.earn(g.reward);
+      this.earn(g.reward, 'goals');
       this.toast(`${g.title}: ${g.pop.toLocaleString()} residents. +$${g.reward.toLocaleString()}`, 'good');
       this.emit('milestone', g);
     }
@@ -313,6 +466,12 @@ export class Game {
     if (!u.avenue && p >= UNLOCK.avenue) { u.avenue = true; if (!silent) { this.toast('Avenues unlocked: wider roads that carry twice the cars.', 'good'); this.emit('unlock', 'avenue'); } }
     if (!u.policies && p >= UNLOCK.policies) { u.policies = true; if (!silent) { this.toast('City policies unlocked.', 'good'); this.emit('unlock', 'policies'); } }
     if (!u.arena && p >= UNLOCK.arena) { u.arena = true; if (!silent) { this.toast('Arena unlocked: match days pack the streets and pay well.', 'good'); this.emit('unlock', 'arena'); } }
+    for (const k of ['truck', 'freight'] as const) {
+      if (!u[k] && p >= UNLOCK[k]) { u[k] = true; if (!silent) { this.toast(k === 'truck' ? 'Freight unlocked: haul food, stone and goods by truck for pay.' : 'Freight rail unlocked: long trains for heavy loads.', 'good'); this.emit('unlock', k); } }
+    }
+    for (const k of ['school', 'clinic'] as const) {
+      if (!u[k] && p >= UNLOCK[k]) { u[k] = true; if (!silent) { this.toast(k === 'school' ? 'Schools unlocked: kids need somewhere to go every morning.' : 'Clinics unlocked: keep your seniors healthy.', 'good'); this.emit('unlock', k); } }
+    }
     const unlockMsg: Record<string, string> = {
       tram: 'Trams unlocked: rails in the road median, never stuck in traffic.',
       ferry: 'Ferries unlocked: put piers on the shore and sail across the water.',
@@ -438,6 +597,15 @@ export class Game {
         if (r.ok && t - this.autopilotLog > DAY * 0.25) { this.autopilotLog = t; this.toast(`Auto-fleet added a ${MODES[best.kind].vehicle} to ${best.name}.`, 'info'); }
       }
     }
+    if (this.autoRenew && t - this.renewT > 6) {
+      this.renewT = t;
+      for (const l of this.transit.lines) {
+        for (const c of l.vehicles) {
+          const worn = this.transit.ageDays(c) > MODES[l.kind].life || c.cond < 0.3;
+          if (worn && this.money > this.renewCost(c) + 2500) { this.renewVehicle(c); break; }
+        }
+      }
+    }
     if (this.advisorOn && t - this.adviceT > 2) {
       this.adviceT = t;
       this.advice = advise(this, this.dismissed);
@@ -543,6 +711,22 @@ export class Game {
     return { ok: true, cost: COST.arena };
   }
 
+  placeService(kind: ServiceKind, i: number): Cmd {
+    const w = this.world, def = SERVICE[kind];
+    if (!this.unlocked[kind]) return { ok: false, msg: `${def.label}s unlock at ${def.unlock} residents.` };
+    if (!w.isUnlocked(i) || w.water[i] || !w.isEmpty(i) || w.rail[i]) return { ok: false, msg: 'Pick an empty tile.' };
+    const rf = this.city.roadFor({ x: tileX(i), y: tileY(i) });
+    if (rf.tile < 0) return { ok: false, msg: `A ${kind} needs a road beside it.` };
+    if (this.money < def.cost) return { ok: false, msg: 'Not enough money. Need $' + def.cost.toLocaleString() + '.' };
+    this.spend(def.cost);
+    const b = this.city.addBuilding(tileX(i), tileY(i), 'com', 2, kind);
+    w.version.tiles++;
+    for (const p of this.city.persons) if (!p.work) this.city.occupy(p);
+    this.emit('sfx', 'build');
+    this.toast(kind === 'school' ? `${b.name} is open. Pupils nearby will enrol tomorrow.` : `${b.name} is open. Seniors can book check-ups.`, 'good');
+    return { ok: true, cost: def.cost };
+  }
+
   bulldoze(i: number): Cmd {
     const w = this.world;
     if (!w.isUnlocked(i)) return { ok: false, msg: 'Locked.' };
@@ -550,6 +734,7 @@ export class Game {
       if (this.money < COST.bulldoze) return { ok: false, msg: 'Not enough money.' };
       const b = this.city.buildings.get(w.bld[i])!;
       this.spend(COST.bulldoze);
+      if (b.special) w.version.tiles++;
       this.city.removeBuilding(b);
       this.emit('sfx', 'demolish');
       return { ok: true, cost: COST.bulldoze };
@@ -617,6 +802,16 @@ export class Game {
     if (w.stop[t] >= 0) return w.stopKind[t] === m.stopCode ? null : 'That tile already has a different kind of stop.';
     switch (mode) {
       case 'bus': case 'tram': return w.road[t] ? null : 'Stops go on roads.';
+      case 'truck': {
+        if (!w.road[t]) return 'Yards go on roads, right beside an industry or shop.';
+        const near = this.city.sitesNear(wx(tileX(t)), wz(tileY(t)));
+        return near.length ? null : 'No industry or shop within reach. Put the yard beside a farm, quarry, factory, terminal or shop.';
+      }
+      case 'freight': {
+        if (w.water[t] || w.bld[t] >= 0 || w.road[t] || w.park[t]) return 'Depots need open ground.';
+        const near = this.city.sitesNear(wx(tileX(t)), wz(tileY(t)));
+        return near.some((b) => isIndustry(b.special)) ? null : 'No industry within reach. Put the depot beside a farm, quarry, factory or terminal.';
+      }
       case 'metro': return w.water[t] || w.bld[t] >= 0 ? 'Stations need open ground or a road.' : null;
       case 'ferry':
         if (w.water[t]) return 'Piers go on the shore, not in the water.';
@@ -647,6 +842,21 @@ export class Game {
   quoteLine(mode: Mode, tiles: number[]): { cost: number; ok: boolean; reason?: string; track: number[]; widen: number[] } {
     const w = this.world, m = MODES[mode];
     if (mode === 'bus') { const q = this.quoteBus(tiles); return { ...q, track: [], widen: [] }; }
+    if (mode === 'truck') {
+      let cost = m.baseCost;
+      for (const t of tiles) {
+        const why = this.spotCheck(mode, t);
+        if (why) return { cost, ok: false, reason: why, track: [], widen: [] };
+        if (w.stop[t] < 0) cost += m.stopCost;
+      }
+      for (let k = 0; k + 1 < tiles.length; k++) {
+        if (tiles[k] === tiles[k + 1]) return { cost, ok: false, reason: 'Pick a different yard.', track: [], widen: [] };
+        if (!this.traffic.router.find(tiles[k], tiles[k + 1])) return { cost, ok: false, reason: 'Those yards are not connected by road.', track: [], widen: [] };
+      }
+      const flow = this.cargoFlow(tiles);
+      if (!flow.ok) return { cost, ok: false, reason: flow.reason, track: [], widen: [] };
+      return { cost, ok: true, track: [], widen: [] };
+    }
     let cost = m.baseCost;
     const widen: number[] = [];
     for (const t of tiles) {
@@ -656,6 +866,12 @@ export class Game {
     }
     const plan = this.transit.planTrack(mode, tiles, this.transit.nextLineId);
     if (!plan.ok) return { cost, ok: false, reason: plan.reason, track: plan.tiles, widen };
+    if (mode === 'freight') {
+      const flow = this.cargoFlow(tiles);
+      if (!flow.ok) return { cost, ok: false, reason: flow.reason, track: plan.tiles, widen };
+      for (const t of plan.tiles) { if (isSolidCode(w.stopKind[t]) && !tiles.includes(t)) continue; cost += m.trackCost + (w.water[t] ? COST.trackWater : 0); }
+      return { cost: Math.round(cost), ok: true, track: plan.tiles, widen };
+    }
     if (mode === 'metro') {
       for (const t of plan.tiles) {
         if (w.stopKind[t] === 2 && !tiles.includes(t)) continue;
@@ -678,18 +894,34 @@ export class Game {
     return { cost, ok: true, track: plan.tiles, widen };
   }
 
+  /** does a route with these stops actually have something to haul and someone to take it? */
+  cargoFlow(tiles: number[]): { ok: boolean; reason?: string; types: number[] } {
+    const sites = tiles.map((t) => this.city.sitesNear(wx(tileX(t)), wz(tileY(t))));
+    const types: number[] = [];
+    for (let i = 0; i < sites.length; i++) {
+      for (const p of sites[i]) {
+        if (!isIndustry(p.special) || p.special === 'terminal') continue;
+        const F = FACILITY[p.special as 'farm' | 'quarry' | 'factory'];
+        if (F.makes < 0) continue;
+        for (let j = 0; j < sites.length; j++) if (j !== i && sites[j].some((q) => q !== p && room(q, F.makes) > 0)) { if (!types.includes(F.makes)) types.push(F.makes); }
+      }
+    }
+    if (!types.length) return { ok: false, reason: 'Nothing to haul on this route. Link a farm, quarry or factory to a place that buys what it makes (shops, a factory, or the terminal).', types };
+    return { ok: true, types };
+  }
+
   createBusLine(tiles: number[]): Cmd & { line?: Line } { return this.createLine('bus', tiles); }
 
   createLine(mode: Mode, tiles: number[]): Cmd & { line?: Line } {
     const m = MODES[mode];
-    if (mode !== 'bus' && !this.unlocked[mode]) return { ok: false, msg: `${m.label} unlocks at ${m.unlock} residents.` };
+    if (mode !== 'bus' && !this.unlocked[mode as keyof Game['unlocked']]) return { ok: false, msg: `${m.label} unlocks at ${m.unlock} residents.` };
     if (tiles.length < 2) return { ok: false, msg: `A line needs at least two ${m.stopWord}s.` };
     if (this.transit.lines.length >= MAX_LINES) return { ok: false, msg: `That is the most lines the network can run (${MAX_LINES}). Delete one first.` };
     const q = this.quoteLine(mode, tiles);
     if (!q.ok) return { ok: false, msg: q.reason };
     if (q.cost > this.money) return { ok: false, msg: 'Not enough money. Need $' + Math.ceil(q.cost).toLocaleString() + '.' };
     const line = this.transit.createLine(mode, tiles);
-    if (!line) return { ok: false, msg: mode === 'bus' ? 'Could not route that line.' : 'No room for that route.' };
+    if (!line) return { ok: false, msg: isRoadMode(mode) ? 'Could not route that line.' : 'No room for that route.' };
     if (q.widen.length) this.widenRoads(q.widen);
     this.spend(q.cost);
     this.emit('sfx', 'line');
@@ -712,7 +944,7 @@ export class Game {
     if (why) return { cost: 0, ok: false, reason: why, track: [], widen: [] };
     let cost = w.stop[tile] < 0 ? m.stopCost : 0;
     if (line.stops.includes(this.transit.stopAt(tile) as any)) return { cost: 0, ok: false, reason: 'That stop is already on this line.', track: [], widen: [] };
-    if (line.kind === 'bus') {
+    if (isRoadMode(line.kind)) {
       const last = line.stops[line.stops.length - 1].tile;
       const path = this.traffic.router.find(last, tile);
       return { cost, ok: !!path, reason: path ? undefined : 'Those stops are not connected by road.', track: path ?? [], widen: [] };
@@ -725,6 +957,7 @@ export class Game {
     for (const t of plan.tiles.slice(1)) {
       if (line.kind === 'tram') { if (!seen.has(t)) { seen.add(t); cost += m.trackCost; if (w.road[t] === 1) { cost += COST.upgrade; widen.push(t); } } }
       else if (line.kind === 'metro') cost += COST.track + (w.water[t] ? COST.trackWater : 0);
+      else if (line.kind === 'freight') cost += m.trackCost + (w.water[t] ? COST.trackWater : 0);
       else if (line.kind === 'ferry') cost += m.trackCost;
     }
     if (line.kind === 'gondola') { const lt = line.stops[line.stops.length - 1].tile; cost += Math.round(Math.hypot(tileX(tile) - tileX(lt), tileY(tile) - tileY(lt)) * m.trackCost); }
@@ -746,7 +979,7 @@ export class Game {
 
   /** extra stops worth placing between two stops so a long hop still serves the blocks in between */
   autoStops(mode: Mode, a: number, b: number): number[] {
-    if (mode === 'ferry' || mode === 'gondola') return [];
+    if (mode === 'ferry' || mode === 'gondola' || isCargoMode(mode)) return [];
     const w = this.world;
     let path: number[] | null = null;
     if (mode === 'metro') path = this.transit.trackRouter.find(a, b, this.transit.nextLineId, -1, new Set());
@@ -794,14 +1027,14 @@ export class Game {
     if (line.vehicles.length >= this.transit.maxVehicles(line)) return { ok: false, msg: 'This line is at its vehicle limit.' };
     if (this.money < c) return { ok: false, msg: 'Not enough money.' };
     if (!this.transit.addVehicle(line)) return { ok: false, msg: 'No room.' };
-    this.spend(c);
+    this.spend(c, 'vehicles');
     this.emit('linesChanged');
     this.emit('sfx', 'build');
     return { ok: true, cost: c };
   }
   removeVehicle(line: Line): Cmd {
     if (!this.transit.removeVehicle(line)) return { ok: false, msg: 'A line needs at least one vehicle.' };
-    this.earn(this.transit.vehicleCost(line) * 0.5);
+    this.earn(this.transit.vehicleCost(line) * 0.5, 'refund');
     this.emit('linesChanged');
     return { ok: true };
   }
@@ -809,7 +1042,7 @@ export class Game {
     const m = MODES[line.kind];
     const refund = Math.round(60 + (line.kind === 'gondola' ? this.transit.lineLength(line) : line.tiles.length) * m.trackCost * 0.3 + line.vehicles.length * m.vehCost * 0.4);
     this.transit.deleteLine(line);
-    this.earn(refund);
+    this.earn(refund, 'refund');
     this.emit('sfx', 'demolish');
     return { ok: true, cost: -refund };
   }
@@ -859,25 +1092,37 @@ export class Game {
 export interface SaveData {
   v: 1; seed: number; t: number; money: number; name: string; stability: number; goalIdx: number; bestPop: number;
   policies: Policies; districts: number[]; roads: number[]; parks: number[];
-  buildings: number[][]; stops: [number, number, string, number][]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number }[];
+  buildings: (number | string)[][]; stops: [number, number, string, number][]; people?: PersonSave[]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number; fare?: number }[];
   daysSurvived: number; dayIncome: number; peak: number; diff?: number;
+  fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number> };
 }
 
+export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number }
+
 // save order: bus 0 and metro 1 match the first save format
-const SAVE_MODES: Mode[] = ['bus', 'metro', 'tram', 'ferry', 'gondola'];
+const SAVE_MODES: Mode[] = ['bus', 'metro', 'tram', 'ferry', 'gondola', 'truck', 'freight'];
 
 export function serialize(g: Game): SaveData {
   const w = g.world;
   const roads: number[] = [], parks: number[] = [];
   for (let i = 0; i < N * N; i++) { if (w.road[i]) roads.push(i, w.road[i]); if (w.park[i]) parks.push(i); }
   const code = { res: 0, com: 1, ind: 2 } as const;
-  const buildings = [...g.city.buildings.values()].map((b) => [b.x, b.y, b.special ? 3 : code[b.kind], b.level, b.variant, b.rot, b.residents.length]);
+  const blist = [...g.city.buildings.values()];
+  const bIndex = new Map(blist.map((b, i) => [b.id, i] as const));
+  const sp = { arena: 3, school: 4, clinic: 5, farm: 6, quarry: 7, factory: 8, terminal: 9 } as const;
+  const buildings = blist.map((b) => [b.x, b.y, b.special ? sp[b.special] : code[b.kind], b.level, b.variant, b.rot, b.residents.length, b.venue ?? '', b.name, ...b.out.map((v) => Math.round(v * 10) / 10), ...b.stock.map((v) => Math.round(v * 10) / 10), Math.round(b.eff * 100) / 100]);
+  const people: PersonSave[] = g.city.persons.map((p) => ({
+    i: p.id, b: bIndex.get(p.home.id) ?? 0, h: p.hh.id, f: p.first, l: p.last, a: p.age, t: p.traits,
+    n: [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort].map((v) => Math.round(v * 100) / 100),
+    x: Math.round(p.xp * 10) / 10, wl: Math.round(p.wallet), k: p.look, fr: p.friends, w: p.work ? bIndex.get(p.work.id) ?? -1 : -1, bt: Math.round(p.born),
+  }));
   const stops = g.transit.stops.map((s) => [s.tile, SAVE_MODES.indexOf(s.kind), s.name, s.cap] as [number, number, string, number]);
-  const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length }));
+  const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length, fare: l.fareMul }));
   return {
     v: 1, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
-    policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, buildings, stops, lines,
+    policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, buildings, stops, lines, people,
     daysSurvived: g.daysSurvived, dayIncome: g.dayIncome, peak: g.peakTraffic, diff: g.diff,
+    fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research } },
   };
 }
 
@@ -894,21 +1139,53 @@ export function restore(d: SaveData): Game {
   w.version.roads++;
   g.city.refreshAccess();
   const kinds = ['res', 'com', 'ind'] as const;
-  for (const [x, y, k, level, variant, rot, res] of d.buildings) {
-    const b = k === 3 ? g.city.addBuilding(x, y, 'com', 3, 'arena') : g.city.addBuilding(x, y, kinds[k], level);
+  const blist: Building[] = [];
+  for (const row of d.buildings) {
+    const [x, y, k, level, variant, rot, res, venue, name, o0, o1, o2, s0, s1, s2, eff] = row as [number, number, number, number, number, number, number, string, string, number, number, number, number, number, number, number];
+    const special = k === 3 ? 'arena' : k === 4 ? 'school' : k === 5 ? 'clinic' : k === 6 ? 'farm' : k === 7 ? 'quarry' : k === 8 ? 'factory' : k === 9 ? 'terminal' : undefined;
+    const b = special ? g.city.addBuilding(x, y, k >= 6 ? 'ind' : 'com', special === 'arena' ? 3 : 2, special) : g.city.addBuilding(x, y, kinds[k], level);
+    if (o0 !== undefined) { b.out = [o0, o1, o2]; b.stock = [s0, s1, s2]; b.eff = eff || 1; }
     b.variant = variant; b.rot = rot; b.born = d.t - 200; b.lastLevel = d.t - 100;
-    for (let i = 0; i < res; i++) g.city.createPerson(b);
+    if (venue && !special) b.venue = venue as Building['venue'];
+    if (name) b.name = name;
+    blist.push(b);
+    if (!d.people) g.city.fillHome(b, res);
   }
-  for (const p of g.city.persons) g.city.assignJob(p);
+  if (d.people) {
+    const hhs = new Map<number, Household>();
+    const byOld = new Map<number, Person>();
+    const traitOk = new Set(Object.keys(TRAITS));
+    for (const ps of d.people) {
+      const home = blist[ps.b];
+      if (!home) continue;
+      let hh = hhs.get(ps.h);
+      if (!hh) { hh = g.city.newHousehold(home, ps.l); hhs.set(ps.h, hh); }
+      const p = g.city.createPerson(home, { age: ps.a, hh, first: ps.f });
+      p.traits = ps.t.filter((t) => traitOk.has(t)) as Person['traits'];
+      [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort] = ps.n;
+      p.xp = ps.x; p.wallet = ps.wl; p.look = ps.k; p.born = ps.bt;
+      p.mood = moodOf(p);
+      byOld.set(ps.i, p);
+      const wb = ps.w >= 0 ? blist[ps.w] : null;
+      if (wb && wb.kind !== 'res') {
+        p.work = wb;
+        if (wb.special === 'school') { wb.students.push(p); p.student = true; p.title = 'Student'; p.workStart = 7.8 + g.rand() * 0.5; p.workEnd = 15 + g.rand() * 0.6; }
+        else { wb.workers.push(p); g.city.refreshJob(p); }
+      }
+    }
+    for (const ps of d.people) { const p = byOld.get(ps.i); if (p) p.friends = ps.fr.map((f) => byOld.get(f)?.id).filter((x): x is number => x !== undefined); }
+  }
+  for (const p of g.city.persons) g.city.occupy(p);
+  if (d.fin) { g.loan = d.fin.loan; g.maint = d.fin.maint; g.autoRenew = d.fin.autoRenew; Object.assign(g.research, d.fin.research); }
   for (const [tile, k, name, cap] of d.stops) { const s = g.transit.addStop(tile, SAVE_MODES[k] ?? 'bus', name); s.cap = cap; }
   for (const l of d.lines) {
     const line = g.transit.createLine(l.kind, l.tiles);
     if (!line) continue;
-    line.color = l.color; line.name = l.name;
+    line.color = l.color; line.name = l.name; line.fareMul = l.fare ?? 1;
     while (line.vehicles.length < l.veh) if (!g.transit.addVehicle(line)) break;
   }
   g.city.updateStats();
-  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.tram = g.unlocked.ferry = g.unlocked.gondola = g.unlocked.arena = false;
+  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.tram = g.unlocked.ferry = g.unlocked.gondola = g.unlocked.arena = g.unlocked.school = g.unlocked.clinic = g.unlocked.truck = g.unlocked.freight = false;
   (g as any).updateUnlocks(true);
   g.daysSurvived = d.daysSurvived;
   g.emit('roadsChanged');

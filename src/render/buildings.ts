@@ -495,6 +495,221 @@ function arena(r: () => number): Variant {
   return { geo, height: 0.5, smoke: [] };
 }
 
+
+function school(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, LOT_PAVE);
+  const brick = lin(0xe7c99a), trim = lin(0xf6f1e6), roof = lin(0x6a5a52), accent = lin(0xf2b84b);
+  // play yard with court lines and a hoop
+  b.floor(0.18, 0.0175, 0.3, 0.5, 0.3, lin(0x7fa6c9));
+  b.floor(0.18, 0.0185, 0.3, 0.46, 0.012, lin(0xf4f4ef)); b.floor(0.18, 0.0185, 0.3, 0.012, 0.26, lin(0xf4f4ef));
+  b.cyl(0.43, 0.016, 0.3, 0.006, 0.006, 0.14, lin(0x8a929c), 5, { cap: false });
+  b.box(0.43, 0.15, 0.3, 0.012, 0.03, 0.05, lin(0xf4f4ef));
+  b.paintW = 1;
+  // long main wing with window bands
+  b.box(-0.05, 0.016, -0.12, 0.82, 0.22, 0.3, brick, { win: W(0.1, 0.11, 0.62, 0.55), top: roof });
+  // taller classroom block
+  b.box(-0.3, 0.016, -0.12, 0.26, 0.34, 0.32, shade3(brick, 0.96), { win: W(0.1, 0.11, 0.62, 0.55), top: roof });
+  b.paintW = 0;
+  b.box(-0.05, 0.236, -0.12, 0.84, 0.014, 0.32, roof);
+  b.box(-0.3, 0.356, -0.12, 0.28, 0.014, 0.34, roof);
+  // entrance: porch with yellow canopy and steps
+  b.box(0.12, 0.016, 0.06, 0.2, 0.2, 0.06, trim);
+  b.box(0.12, 0.2, 0.075, 0.24, 0.022, 0.12, accent);
+  b.box(0.12, 0.016, 0.06, 0.07, 0.11, 0.012, lin(0x4a5568));
+  b.box(0.12, 0.016, 0.15, 0.24, 0.01, 0.07, trim); b.box(0.12, 0.026, 0.12, 0.2, 0.01, 0.06, trim);
+  // clock tower
+  b.box(0.12, 0.236, -0.12, 0.1, 0.16, 0.1, trim);
+  b.cyl(0.12, 0.396, -0.12, 0.085, 0.0, 0.1, roof, 4, { cap: false });
+  b.box(0.12, 0.3, -0.067, 0.05, 0.05, 0.008, lin(0xfff6dc), { emit: 1.4 });
+  // flagpole
+  b.cyl(-0.42, 0.016, 0.36, 0.006, 0.005, 0.34, lin(0xd8dce0), 5, { cap: false });
+  b.box(-0.39, 0.3, 0.36, 0.06, 0.035, 0.004, lin(0xe05a4f));
+  // trees at the corners
+  tree(b, -0.44, 0.1, 1.1, r); tree(b, -0.4, 0.44, 0.9, r); tree(b, 0.44, -0.4, 1, r);
+  b.paintW = 1;
+  const geo = b.geometry();
+  return { geo, height: 0.5, smoke: [] };
+}
+
+function clinic(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, lin(0xe5e3dc));
+  const white = lin(0xf5f7f8), teal = lin(0x3aa7a0), glass = lin(0x8dc4d2), red = lin(0xe5484d);
+  // lawn and parking
+  b.floor(-0.28, 0.0175, 0.34, 0.36, 0.26, LOT_GRASS);
+  b.floor(0.26, 0.0175, 0.38, 0.4, 0.18, lin(0x9a9fa6));
+  for (let i = 0; i < 5; i++) b.floor(0.12 + i * 0.07, 0.0185, 0.38, 0.006, 0.12, lin(0xf4f4ef));
+  b.paintW = 1;
+  // main wing: three storeys, long ribbon windows
+  b.box(0, 0.016, -0.1, 0.7, 0.36, 0.34, white, { win: W(0.09, 0.12, 0.72, 0.5), top: ROOF_FLAT });
+  // side wing
+  b.box(-0.3, 0.016, 0.1, 0.26, 0.2, 0.3, shade3(white, 0.97), { win: W(0.09, 0.1, 0.7, 0.5), top: ROOF_FLAT });
+  b.paintW = 0;
+  b.box(0, 0.376, -0.1, 0.72, 0.014, 0.36, shade3(white, 0.8));
+  b.box(-0.3, 0.216, 0.1, 0.28, 0.014, 0.32, shade3(white, 0.8));
+  // teal band and glass lobby with an ambulance canopy
+  b.box(0, 0.2, -0.1, 0.72, 0.03, 0.36, teal);
+  b.box(0.18, 0.016, 0.09, 0.3, 0.14, 0.14, glass, { emit: 0.7 });
+  b.box(0.18, 0.156, 0.09, 0.34, 0.018, 0.18, teal);
+  b.box(-0.02, 0.1, 0.12, 0.2, 0.012, 0.16, white);
+  for (const sx of [-0.11, 0.07]) b.box(sx, 0.016, 0.19, 0.012, 0.084, 0.012, lin(0xcfd5da));
+  // red cross sign on the front
+  b.box(0.0, 0.26, 0.075, 0.1, 0.1, 0.012, white);
+  b.box(0.0, 0.29, 0.082, 0.07, 0.022, 0.006, red, { emit: 1.6 }); b.box(0.0, 0.266, 0.082, 0.022, 0.07, 0.006, red, { emit: 1.6 });
+  // helipad on the roof
+  b.cyl(0.22, 0.39, -0.1, 0.1, 0.1, 0.012, lin(0x5b6670), 16);
+  b.floor(0.22, 0.4025, -0.1, 0.1, 0.014, lin(0xf4f4ef)); b.floor(0.22, 0.4025, -0.1, 0.014, 0.1, lin(0xf4f4ef));
+  ac(b, -0.2, 0.39, -0.12, r);
+  tree(b, -0.38, 0.36, 1.1, r); tree(b, -0.22, 0.4, 0.9, r); bush(b, -0.1, 0.34, 1, r);
+  b.paintW = 1;
+  const geo = b.geometry();
+  return { geo, height: 0.5, smoke: [] };
+}
+
+
+// ------------------------------------------------------------------------------ freight industries
+
+const CROP_A = lin(0x9bc55a), CROP_B = lin(0x7fae4b), SOIL = lin(0x8a6a48), BARN_RED = lin(0xb5493b), BARN_TRIM = lin(0xf3eee2), HAY = lin(0xe3c46b);
+const CROPS = [lin(0xd9b84a), lin(0x6fae4c), lin(0x93c452), lin(0x5c9a45)];
+
+function farm(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, lin(0x7fb257));
+  // crop rows in two plots
+  for (const [cx, cz, w, d, ci] of [[-0.22, -0.2, 0.5, 0.34, 0], [0.24, -0.2, 0.42, 0.34, 1], [-0.18, 0.28, 0.54, 0.26, 2]] as const) {
+    b.floor(cx, 0.0175, cz, w, d, SOIL);
+    const n = Math.floor(d / 0.045);
+    for (let i = 0; i < n; i++) b.floor(cx, 0.0185, cz - d / 2 + 0.03 + i * 0.045, w - 0.03, 0.026, CROPS[(ci + (i & 1)) % 4]);
+  }
+  // barn with a gambrel-ish roof
+  b.paintW = 0;
+  b.box(0.3, 0.016, 0.3, 0.3, 0.14, 0.22, BARN_RED);
+  b.gable(0.3, 0.156, 0.3, 0.3, 0.22, 0.09, lin(0x6a5a52), lin(0x594a44), 0.025, false);
+  b.gableEnds(0.3, 0.156, 0.3, 0.3, 0.22, 0.09, BARN_RED, false);
+  b.box(0.3, 0.016, 0.412, 0.1, 0.1, 0.008, BARN_TRIM);
+  b.box(0.3, 0.016, 0.413, 0.008, 0.1, 0.006, BARN_RED);
+  // silo
+  b.cyl(0.08, 0.016, 0.36, 0.05, 0.05, 0.3, lin(0xdfe3e8), 12, { capColor: lin(0xaab2bb) });
+  b.blob(0.08, 0.316, 0.36, 0.05, 0.03, 0.05, lin(0xb9c1ca), 9, 4);
+  // farmhouse
+  b.paintW = 1;
+  b.box(-0.36, 0.016, 0.34, 0.2, 0.1, 0.16, lin(0xf2e6cf), { win: W(0.14, 0.14, 0.5, 0.5) });
+  b.paintW = 0;
+  b.gable(-0.36, 0.116, 0.34, 0.2, 0.16, 0.08, lin(0xc9694a), lin(0xa3503b), 0.025, true);
+  // hay bales and a tractor
+  for (let i = 0; i < 4; i++) b.cyl(-0.05 + (i % 2) * 0.07, 0.016 + Math.floor(i / 2) * 0.05, 0.1 + (i % 2) * 0.02, 0.03, 0.03, 0.045, HAY, 8);
+  b.box(0.1, 0.034, 0.02, 0.12, 0.05, 0.07, lin(0x3d8f46));
+  b.box(0.16, 0.084, 0.02, 0.05, 0.04, 0.06, lin(0x3d8f46));
+  b.box(0.045, 0.016, 0.02, 0.06, 0.06, 0.08, lin(0x1f2328));
+  tree(b, -0.46, -0.44, 1.2, r); tree(b, 0.46, -0.44, 1, r); tree(b, 0.44, 0.1, 0.9, r);
+  // fence
+  for (const sx of [-1, 1]) b.box(sx * 0.47, 0.016, 0.0, 0.006, 0.03, 0.9, lin(0xf3f0e8));
+  b.paintW = 1;
+  const geo = b.geometry();
+  return { geo, height: 0.46, smoke: [] };
+}
+
+function quarry(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, lin(0xc9bfa6));
+  // terraced pit: rim rings stepping down toward a dark floor
+  const rings: [number, number, number][] = [[0.46, 0.07, 0xb7a98a], [0.37, 0.05, 0xa89877], [0.28, 0.03, 0x9a8967]];
+  for (const [rad, h, col] of rings) b.cyl(-0.08, 0.016, -0.1, rad, rad - 0.03, h, lin(col), 22, { cap: false });
+  b.cyl(-0.08, 0.016, -0.1, 0.2, 0.2, 0.012, lin(0x6e6350), 20);
+  b.cyl(-0.08, 0.026, -0.1, 0.08, 0.08, 0.004, lin(0x4a7a96), 14);          // a small pool at the bottom
+  // ramp
+  b.box(0.19, 0.03, -0.1, 0.24, 0.016, 0.06, lin(0x8c7c5d));
+  // crusher and hopper
+  b.box(0.36, 0.016, 0.22, 0.2, 0.18, 0.16, lin(0x8c929a));
+  b.box(0.36, 0.196, 0.22, 0.22, 0.014, 0.18, lin(0x5c6168));
+  b.cone(0.36, 0.21, 0.22, 0.09, 0.07, lin(0xd08f2d), 4);
+  b.box(0.2, 0.1, 0.22, 0.2, 0.012, 0.03, lin(0x3b4048));                    // conveyor
+  b.box(0.12, 0.016, 0.22, 0.014, 0.09, 0.014, lin(0x6c7078));
+  // stone piles
+  for (const [px, pz, rad, h, col] of [[-0.3, 0.3, 0.1, 0.1, 0xaab0b8], [-0.1, 0.38, 0.08, 0.07, 0x8f959d], [0.1, 0.42, 0.07, 0.06, 0xc4c9cf]] as const) b.cone(px, 0.016, pz, rad, h, lin(col), 9);
+  // excavator and dump truck
+  b.box(-0.28, 0.016, -0.34, 0.12, 0.05, 0.08, lin(0xf2b84b));
+  b.box(-0.3, 0.066, -0.34, 0.06, 0.04, 0.06, lin(0xf2b84b));
+  b.box(-0.22, 0.09, -0.34, 0.1, 0.014, 0.02, lin(0xf2b84b));
+  b.box(0.1, 0.03, -0.38, 0.16, 0.05, 0.08, lin(0xf2b84b));
+  b.box(0.04, 0.08, -0.38, 0.1, 0.03, 0.07, lin(0x5c6168));
+  tree(b, 0.44, -0.12, 0.9, r); tree(b, -0.46, 0.1, 0.9, r);
+  b.paintW = 1;
+  const geo = b.geometry();
+  return { geo, height: 0.38, smoke: [] };
+}
+
+function freightFactory(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, LOT_CONC);
+  b.floor(0, 0.0175, 0.42, 0.9, 0.012, lin(0xf2c14e));
+  const wall = lin(0xe5e2da), brick = lin(0xc47a5a);
+  b.paintW = 1;
+  // main hall with a sawtooth roof
+  b.box(-0.12, 0.016, -0.08, 0.66, 0.2, 0.5, wall, { win: W(0.16, 0.2, 0.7, 0.5), top: ROOF_DARK });
+  b.paintW = 0;
+  for (let i = 0; i < 4; i++) {
+    const x0 = -0.38 + i * 0.16;
+    b.box(x0 + 0.08, 0.216, -0.08, 0.16, 0.0, 0.5, ROOF_DARK);
+    b.gable(x0 + 0.08, 0.216, -0.08, 0.16, 0.5, 0.06, lin(0x8c9298), lin(0x70767d), 0.0, true);
+    b.box(x0 + 0.02, 0.216, -0.08, 0.004, 0.058, 0.5, lin(0x8fb7c9), { emit: 0.6 });    // north-light glazing
+  }
+  // loading dock with bays and a truck
+  b.box(0.28, 0.016, 0.04, 0.2, 0.12, 0.34, brick);
+  for (let i = 0; i < 3; i++) b.box(0.386, 0.016, -0.06 + i * 0.1, 0.012, 0.08, 0.07, lin(0x4a515c));
+  b.box(0.5, 0.03, 0.04, 0.12, 0.07, 0.06, lin(0xf2f2ee));
+  // stack and tanks
+  for (let k = 0; k < 6; k++) b.cyl(-0.3, 0.216 + k * 0.1, -0.34, 0.032 - k * 0.0012, 0.032 - (k + 1) * 0.0012, 0.1, k % 2 ? lin(0xf0eee8) : lin(0xd4553e), 9, { cap: k === 5 });
+  for (const [tx, tz] of [[-0.36, 0.36], [-0.2, 0.38], [-0.04, 0.36]] as const) b.cyl(tx, 0.016, tz, 0.065, 0.065, 0.13, lin(0xd9dce0), 12, { capColor: lin(0xb8bfc6) });
+  b.box(-0.2, 0.15, 0.37, 0.4, 0.01, 0.014, lin(0xf08a3c));
+  // crates of finished goods
+  for (let i = 0; i < 6; i++) b.box(0.0 + (i % 3) * 0.07, 0.016 + Math.floor(i / 3) * 0.05, 0.4, 0.06, 0.048, 0.06, i % 2 ? lin(0xd29a5c) : lin(0xb9824a));
+  tree(b, 0.46, 0.46, 0.8, r);
+  b.paintW = 1;
+  const geo = b.geometry();
+  return { geo, height: 0.78, smoke: [{ x: -0.3, y: 0.82, z: -0.34 }] };
+}
+
+const BOXES = [0xc8452e, 0x2f5d9e, 0xe8b84a, 0x2f9e6b, 0xeceae2, 0xd9783a];
+function terminal(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, lin(0xb6b4ad));
+  for (let i = -2; i <= 2; i++) b.floor(i * 0.2, 0.0175, 0, 0.006, 0.9, lin(0xf2f2ee));
+  // container stacks
+  const rnd = mulberry32(77);
+  for (let gx = 0; gx < 4; gx++) for (let gz = 0; gz < 2; gz++) {
+    const h = 1 + ((rnd() * 3) | 0);
+    for (let k = 0; k < h; k++) b.box(-0.34 + gx * 0.2, 0.016 + k * 0.05, -0.28 + gz * 0.12, 0.17, 0.048, 0.1, lin(BOXES[(gx * 3 + gz * 5 + k) % BOXES.length]));
+  }
+  // portal crane
+  const cy = 0.34;
+  for (const sx of [-0.4, 0.4]) for (const sz of [-0.36, -0.16]) b.box(sx, 0.016, sz, 0.02, cy, 0.02, lin(0xf2b84b));
+  b.box(0, cy + 0.016, -0.26, 0.84, 0.03, 0.04, lin(0xf2b84b));
+  b.box(0.1, cy - 0.06, -0.26, 0.04, 0.06, 0.05, lin(0x3b4048));
+  b.box(0.1, cy - 0.14, -0.26, 0.014, 0.08, 0.014, lin(0x3b4048));
+  b.box(0.1, cy - 0.17, -0.26, 0.1, 0.03, 0.07, lin(BOXES[1]));
+  b.box(0.0, cy + 0.046, -0.26, 0.05, 0.03, 0.05, lin(0xfff6dc), { emit: 3 });
+  // warehouse and office
+  b.paintW = 1;
+  b.box(-0.1, 0.016, 0.3, 0.6, 0.16, 0.3, lin(0xdfe3e8), { win: W(0.2, 0.2, 0.0, 0.0), top: ROOF_DARK });
+  b.box(0.36, 0.016, 0.32, 0.2, 0.24, 0.2, lin(0xe9edf2), { win: W(0.1, 0.12, 0.7, 0.6), top: ROOF_FLAT });
+  b.paintW = 0;
+  for (let i = 0; i < 4; i++) b.box(-0.3 + i * 0.13, 0.016, 0.455, 0.09, 0.1, 0.01, lin(0x4a5568));
+  b.box(0.36, 0.26, 0.32, 0.22, 0.01, 0.22, lin(0x9aa3ac));
+  b.box(0.36, 0.27, 0.32, 0.12, 0.05, 0.02, lin(0xffc54d), { emit: 2 });
+  b.paintW = 1;
+  void r;
+  const geo = b.geometry();
+  return { geo, height: 0.4, smoke: [] };
+}
+
 // ------------------------------------------------------------------------------ catalogue
 
 const MAKERS: Record<Kind, ((r: () => number, v: number) => Variant)[]> = {
@@ -505,6 +720,12 @@ const MAKERS: Record<Kind, ((r: () => number, v: number) => Variant)[]> = {
 
 export function buildVariant(kind: Kind, level: number, variant: number, special?: string): Variant {
   if (special === 'arena') return arena(mulberry32(5));
+  if (special === 'school') return school(mulberry32(11));
+  if (special === 'clinic') return clinic(mulberry32(13));
+  if (special === 'farm') return farm(mulberry32(17));
+  if (special === 'quarry') return quarry(mulberry32(19));
+  if (special === 'factory') return freightFactory(mulberry32(23));
+  if (special === 'terminal') return terminal(mulberry32(29));
   const r = mulberry32(kind.charCodeAt(0) * 1000 + level * 100 + variant * 7 + 3);
   return MAKERS[kind][level - 1](r, variant);
 }
@@ -540,7 +761,7 @@ export class BuildingsView {
     let p = this.pools.get(key);
     if (p) return p;
     const v = buildVariant(kind, level, variant, special);
-    const cap = special ? 4 : 220;
+    const cap = special === 'arena' ? 4 : special ? 24 : 220;
     const mesh = new THREE.InstancedMesh(v.geo, this.material, cap);
     mesh.count = 0;
     mesh.frustumCulled = false;

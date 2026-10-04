@@ -7,7 +7,8 @@ import { h, icon, money, fmt } from './dom.ts';
 import { Tools } from './tools.ts';
 import { Hud } from './hud.ts';
 import { Panels } from './panels.ts';
-import { MODES, MODE_ORDER } from '../sim/modes.ts';
+import { MODES, MODE_ORDER, CARGO_ORDER } from '../sim/modes.ts';
+import type { Person } from '../sim/types.ts';
 import type { Quality } from '../render/renderer.ts';
 
 const SAVE_KEY = 'rushline.save.v1';
@@ -79,6 +80,7 @@ export class App {
     g.on('dayEnd', () => this.autosave());
     g.on('bldRemove', () => this.panels.sync());
     g.on('advice', () => this.hud.refreshAdvice());
+    g.on('life', (it: any) => { if (!this.titleMode) this.hud.pushTick(it); });
     let lastDepart = 0;
     g.on('depart', (e: { kind: string; x: number; z: number }) => {
       const r = this.view.rig, now = performance.now();
@@ -89,6 +91,30 @@ export class App {
   }
 
   toast(msg: string, tone: 'info' | 'warn' | 'bad' | 'good' = 'info') { this.hud.toast(msg, tone); }
+
+  // ------------------------------------------------------------ citizens
+
+  selectPerson(p: Person, focus = false) {
+    this.tools.setSelection({ type: 'person', id: p.id });
+    this.view.focusPerson = p;
+    if (focus) {
+      const w = this.view.citizens.where(p);
+      this.view.rig.focus(w.x, w.z, Math.min(this.view.rig.gDist, 16));
+    }
+    this.sound.sfx('tick');
+  }
+  toggleFollow() {
+    const sel = this.tools.selection;
+    if (sel?.type !== 'person') return;
+    const p = this.game.city.personById.get(sel.id);
+    if (!p) return;
+    if (this.view.follow && this.view.focusPerson === p) { this.stopFollow(); return; }
+    this.view.focusPerson = p;
+    this.view.follow = true;
+    this.view.rig.gDist = Math.min(this.view.rig.gDist, 13);
+    this.sound.sfx('click');
+  }
+  stopFollow() { if (!this.view.follow) return; this.view.follow = false; this.panels.sync(); }
 
   focusCity() {
     const g = this.game;
@@ -210,9 +236,9 @@ export class App {
       h('div', { class: 'hero' },
         h('div', { class: 'logo' }, h('div', { html: '<svg width="54" height="54" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#ffb02e"/><path d="M13 45h14l8-25h16" fill="none" stroke="#2a1a00" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13" cy="45" r="5.5" fill="#fff"/><circle cx="51" cy="20" r="5.5" fill="#fff"/></svg>' })),
         h('h1', {}, 'Rushline'),
-        h('div', { class: 'tag-line' }, 'Your city is growing faster than its streets. Lay the roads, then run buses, trams, metro, ferries and cable cars to keep it moving.'),
+        h('div', { class: 'tag-line' }, 'Real people live in your city and every one of them has to get somewhere. Lay the roads, move them by bus, tram, metro, ferry and cable car, then haul the cargo that keeps the town running.'),
         btns,
-        h('div', { class: 'title-modes' }, ...MODE_ORDER.map((m) => { const sp = h('span', {}, icon(MODES[m].icon), MODES[m].label); sp.style.setProperty('--mc', '#' + MODES[m].color.toString(16).padStart(6, '0')); return sp; })),
+        h('div', { class: 'title-modes' }, ...[...MODE_ORDER, ...CARGO_ORDER].map((m) => { const sp = h('span', {}, icon(MODES[m].icon), MODES[m].label); sp.style.setProperty('--mc', '#' + MODES[m].color.toString(16).padStart(6, '0')); return sp; })),
         h('div', { class: 'dock-l', style: { position: 'static', padding: '4px', marginTop: '6px' } }, ...diffBtns),
         dsub,
         h('div', { class: 'meta' }, 'Drag to look around · scroll to zoom · build with the toolbar')));
@@ -243,9 +269,11 @@ export class App {
           h('kbd', {}, 'Right-drag'), h('span', {}, 'Pan the map'),
           h('kbd', {}, 'Scroll'), h('span', {}, 'Zoom to the cursor'),
           h('kbd', {}, 'Q E'), h('span', {}, 'Rotate · R F tilt'),
-          h('kbd', {}, '1–7'), h('span', {}, 'Choose a tool · 4 again or [ ] swaps bus/tram/metro/ferry/gondola'),
+          h('kbd', {}, '1–8'), h('span', {}, 'Choose a tool · 4 again or [ ] swaps the vehicle type · 8 schools and clinics'),
           h('kbd', {}, 'Enter'), h('span', {}, 'Finish a line'),
           h('kbd', {}, 'G T H'), h('span', {}, 'Traffic, transit, mood views'),
+          h('kbd', {}, 'C B L P'), h('span', {}, 'Citizens, company books, lines, policies'),
+          h('kbd', {}, 'Click a person'), h('span', {}, 'Meet them. Follow to watch their day'),
           h('kbd', {}, 'Space'), h('span', {}, 'Pause · + − speed'),
           h('kbd', {}, 'U'), h('span', {}, 'Hide the interface for screenshots')),
         h('div', { class: 'actions' },
@@ -286,6 +314,7 @@ export class App {
       { id: 'look', title: 'Look around', text: 'Right-drag to pan, scroll to zoom, Q and E to rotate.', done: () => Math.abs(this.view.rig.gDist - this.coachStart.dist) > 3 || Math.hypot(this.view.rig.gTarget.x - this.coachStart.tx, this.view.rig.gTarget.z - this.coachStart.tz) > 3, after: 14 },
       { id: 'road', title: 'Grow the street grid', text: 'Press 2 for the road tool and drag out from the end of a street. New roads open land for homes and shops.', done: () => this.roadCount() > this.coachStart.roads + 5, after: 70 },
       { id: 'bus', title: 'Start a bus line', text: 'Press 4, click a few roads to place stops, then Finish. Or let the advisor (top right) build one for you.', done: () => g.transit.lines.length > this.coachStart.lines, after: 90 },
+      { id: 'meet', title: 'Meet your citizens', text: 'Click any little person or car to see who they are, what they need and what they think. Press C for the town directory.', done: () => this.tools.selection?.type === 'person', after: 30 },
       { id: 'advisor', title: 'Lean on the advisor', text: 'The card at the top right offers one-click fixes: add a vehicle, widen a street, build a line. New modes unlock as you grow.', done: () => false, after: 20 },
       { id: 'watch', title: 'Watch the stability bar', text: 'It drops when roads jam or stops overflow. At zero the city fails. Add capacity before it turns red.', done: () => false, after: 16 },
     ];
@@ -336,6 +365,8 @@ export class App {
     this.tools.update(dt);
     const sel = this.tools.selection;
     v.highlightLine = sel?.type === 'line' ? sel.id : -1;
+    if (sel?.type === 'person') { if (!v.focusPerson || v.focusPerson.id !== sel.id) v.focusPerson = g.city.personById.get(sel.id) ?? null; }
+    else { v.focusPerson = null; v.follow = false; }
     this.hud.update(dt);
     this.panels.update(dt);
     this.updateCoach(dt);
