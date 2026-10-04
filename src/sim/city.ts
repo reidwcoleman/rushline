@@ -51,6 +51,8 @@ export class City {
   stability = 100;
   eventTile = -1;           // festival target
   eventUntil = 0;
+  matchTile = -1;           // arena with a match on
+  matchUntil = 0;
   // callbacks
   onFee: (amount: number, why: string) => void = () => {};
   // trip counters for mode share (per rolling window)
@@ -90,7 +92,7 @@ export class City {
     return { tile: best, dir: bd, all };
   }
 
-  addBuilding(x: number, y: number, kind: Kind, level = 1): Building {
+  addBuilding(x: number, y: number, kind: Kind, level = 1, special?: 'arena'): Building {
     const w = this.w;
     const tile = tileIdx(x, y);
     const rf = this.roadFor({ x, y });
@@ -98,8 +100,9 @@ export class City {
     const b: Building = {
       id: this.nextB++, x, y, tile, kind, level, variant: Math.floor(this.ctx.rand() * variants),
       rot: rf.dir >= 0 ? rf.dir : 0, born: this.ctx.t, cap: CAPS[kind][level - 1], residents: [], workers: [], visitors: 0,
-      access: rf.tile, accessAll: rf.all, land: 0.3, happy: 0.8, lastLevel: this.ctx.t, cutoff: 0, glow: 0,
+      access: rf.tile, accessAll: rf.all, land: 0.3, happy: 0.8, lastLevel: this.ctx.t, cutoff: 0, glow: 0, special,
     };
+    if (special === 'arena') { b.cap = 24; b.variant = 0; }
     this.buildings.set(b.id, b);
     w.bld[tile] = b.id;
     if (w.tree[tile]) { w.tree[tile] = 0; this.ctx.emit('treesChanged'); }
@@ -126,7 +129,7 @@ export class City {
   }
 
   levelUp(b: Building) {
-    if (b.level >= 3) return;
+    if (b.level >= 3 || b.special) return;
     b.level++;
     b.cap = CAPS[b.kind][b.level - 1];
     b.variant = Math.floor(this.ctx.rand() * VARIANTS[b.kind][b.level - 1]);
@@ -283,7 +286,7 @@ export class City {
     }
     if (p.state === 'leisure') {
       dest.visitors++;
-      this.onFee(this.policies.remote ? 0.6 : 0.9, 'shopping');
+      this.onFee(dest.special === 'arena' ? 3.2 : this.policies.remote ? 0.6 : 0.9, dest.special === 'arena' ? 'match' : 'shopping');
     }
     if (p.state === 'work') p.workDay = dayOf(t);
     if (p.state === 'home' || p.state === 'work') { /* settled */ }
@@ -329,6 +332,13 @@ export class City {
         this.leisureTrip(p, day);
       } else if (this.eventTile >= 0 && t < this.eventUntil && p.leisureDone !== day && this.ctx.rand() < dt * 0.005) {
         this.leisureTrip(p, day, true);
+      } else if (this.matchTile >= 0 && t < this.matchUntil && p.leisureDone !== day && this.ctx.rand() < dt * 0.012) {
+        const arena = this.buildings.get(this.w.bld[this.matchTile]);
+        if (arena) {
+          p.leisureDone = day;
+          p.leisureEnd = 21.5 + this.ctx.rand() * 0.7;
+          this.startTrip(p, p.home, arena, 'leisure', 'toLeisure');
+        }
       }
     } else if (p.state === 'work') {
       const from = p.at ?? p.work ?? p.home;
@@ -541,7 +551,7 @@ export class City {
     if (!arr.length) return;
     for (let k = 0; k < 4; k++) {
       const b = arr[Math.floor(this.ctx.rand() * arr.length)];
-      if (b.level >= 3 || this.ctx.t - b.lastLevel < 55 || this.ctx.t - b.born < 25) continue;
+      if (b.level >= 3 || b.special || this.ctx.t - b.lastLevel < 55 || this.ctx.t - b.born < 25) continue;
       const lv = this.landValue(b);
       const need = b.level === 1 ? 0.5 : 0.7;
       const dm = b.kind === 'res' ? s.demand.r : b.kind === 'com' ? s.demand.c : s.demand.i;

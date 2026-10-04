@@ -8,8 +8,8 @@ import type { App } from './app.ts';
 import { TRACK_Y } from '../render/fleet.ts';
 import { money } from './dom.ts';
 
-export type ToolId = 'inspect' | 'road' | 'avenue' | 'bus' | 'metro' | 'park' | 'bulldoze';
-export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'bus', 'metro', 'park', 'bulldoze'];
+export type ToolId = 'inspect' | 'road' | 'avenue' | 'bus' | 'metro' | 'park' | 'arena' | 'bulldoze';
+export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'bus', 'metro', 'park', 'arena', 'bulldoze'];
 
 export type Selection = { type: 'building'; id: number } | { type: 'stop'; id: number } | { type: 'road'; tile: number } | { type: 'line'; id: number } | null;
 
@@ -53,6 +53,7 @@ export class Tools {
 
   select(t: ToolId) {
     if (t === 'avenue' && !this.game.unlocked.avenue) { this.app.toast(`Avenues unlock at ${UNLOCK.avenue} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    if (t === 'arena' && !this.game.unlocked.arena) { this.app.toast(`The arena unlocks at ${UNLOCK.arena.toLocaleString()} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (t === 'metro' && !this.game.unlocked.metro) { this.app.toast(`Metro unlocks at ${UNLOCK.metro} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     if (this.tool === t && t !== 'inspect') { this.cancelDraft(); this.tool = 'inspect'; this.app.hud.refreshTools(); this.refreshPreview(true); return; }
     this.cancelDraft();
@@ -187,6 +188,12 @@ export class Tools {
       case 'road': case 'avenue':
         this.drag = { start: t, cur: t, tiles: [t], paint: false };
         break;
+      case 'arena': {
+        const r = this.game.placeArena(t);
+        if (!r.ok) { this.app.toast(r.msg ?? 'Cannot build there.', 'warn'); this.app.sound.sfx('error'); }
+        else { this.select('inspect'); this.setSelection({ type: 'building', id: this.game.world.bld[t] }); }
+        break;
+      }
       case 'park': case 'bulldoze':
         this.drag = { start: t, cur: t, tiles: [t], paint: true };
         this.bulldozed.clear();
@@ -349,7 +356,8 @@ export class Tools {
       case 'Digit4': this.select('bus'); break;
       case 'Digit5': this.select('metro'); break;
       case 'Digit6': this.select('park'); break;
-      case 'Digit7': this.select('bulldoze'); break;
+      case 'Digit7': this.select('arena'); break;
+      case 'Digit8': this.select('bulldoze'); break;
       case 'Space': e.preventDefault(); this.app.togglePause(); break;
       case 'Equal': case 'NumpadAdd': this.app.setSpeed(g.speed >= 4 ? 4 : g.speed === 0 ? 1 : g.speed * 2); break;
       case 'Minus': case 'NumpadSubtract': this.app.setSpeed(g.speed <= 1 ? 1 : g.speed / 2); break;
@@ -359,6 +367,7 @@ export class Tools {
       case 'KeyG': this.app.hud.setOverlay(this.view.mode === 'traffic' ? 'none' : 'traffic'); break;
       case 'KeyH': this.app.hud.setOverlay(this.view.mode === 'happy' ? 'none' : 'happy'); break;
       case 'KeyM': this.app.toggleMute(); break;
+      case 'KeyU': this.app.ui.style.visibility = this.app.ui.style.visibility === 'hidden' ? '' : 'hidden'; break;
       case 'Enter': this.finishDraft(); break;
       case 'Backspace': e.preventDefault(); this.undoDraft(); break;
       case 'Escape':
@@ -412,7 +421,7 @@ export class Tools {
           if (b) {
             cursors.push({ tile: hv, style: 'info' });
             const names = { res: ['House', 'Apartments', 'Tower'], com: ['Shop', 'Offices', 'Skyscraper'], ind: ['Workshop', 'Factory', 'Plant'] };
-            this.tip = { text: names[b.kind][b.level - 1], sub: b.kind === 'res' ? `${b.residents.length} residents` : `${b.workers.length} / ${b.cap} workers` };
+            this.tip = { text: b.special === 'arena' ? 'Arena' : names[b.kind][b.level - 1], sub: b.kind === 'res' ? `${b.residents.length} residents` : `${b.workers.length} / ${b.cap} workers` };
           } else if (w.stop[hv] >= 0) {
             const s = g.transit.stopById.get(w.stop[hv])!;
             cursors.push({ tile: hv, style: 'info' });
@@ -434,6 +443,15 @@ export class Tools {
           const afford = pr.cost <= g.money;
           this.quote = { text: pr.cost > 0 ? money(pr.cost) : 'Nothing to build', ok: afford && pr.ok.some((x) => x) && pr.cost > 0, reason: !afford ? 'Not enough money' : pr.reason, cost: pr.cost };
           if (!afford) cursors.forEach((c) => { if (c.style === 'ok') c.style = 'bad'; });
+        }
+        break;
+      }
+      case 'arena': {
+        if (hv >= 0) {
+          const rf = g.city.roadFor({ x: tileX(hv), y: tileY(hv) });
+          const ok = w.isUnlocked(hv) && !w.water[hv] && w.isEmpty(hv) && !w.rail[hv] && rf.tile >= 0;
+          cursors.push({ tile: hv, style: ok ? 'ok' : 'bad' });
+          this.quote = { text: money(COST.arena), ok: ok && g.money >= COST.arena, reason: ok ? (g.money >= COST.arena ? undefined : 'Not enough money') : 'Needs empty ground beside a road' };
         }
         break;
       }

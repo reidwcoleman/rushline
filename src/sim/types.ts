@@ -23,6 +23,7 @@ export interface Building {
   lastLevel: number;      // sim time of last level change
   cutoff: number;         // seconds without road access
   glow: number;           // render hint
+  special?: 'arena';
 }
 
 export type PState = 'home' | 'toWork' | 'work' | 'toHome' | 'toLeisure' | 'leisure' | 'toBack';

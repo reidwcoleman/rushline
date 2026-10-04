@@ -226,10 +226,11 @@ export class App {
           h('kbd', {}, 'Right-drag'), h('span', {}, 'Pan the map'),
           h('kbd', {}, 'Scroll'), h('span', {}, 'Zoom to the cursor'),
           h('kbd', {}, 'Q E'), h('span', {}, 'Rotate · R F tilt'),
-          h('kbd', {}, '1–7'), h('span', {}, 'Choose a tool'),
+          h('kbd', {}, '1–8'), h('span', {}, 'Choose a tool'),
           h('kbd', {}, 'Enter'), h('span', {}, 'Finish a line'),
           h('kbd', {}, 'G T H'), h('span', {}, 'Traffic, transit, mood views'),
-          h('kbd', {}, 'Space'), h('span', {}, 'Pause · + − speed')),
+          h('kbd', {}, 'Space'), h('span', {}, 'Pause · + − speed'),
+          h('kbd', {}, 'U'), h('span', {}, 'Hide the interface for screenshots')),
         h('div', { class: 'actions' },
           h('button', { class: 'btn primary', onClick: () => this.closeModal() }, 'Resume'),
           h('button', { class: 'btn danger', onClick: () => { if (confirm('Start a new city? This one is saved only until you do.')) this.newCity(); } }, 'New city'))));

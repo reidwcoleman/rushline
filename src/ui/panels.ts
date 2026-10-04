@@ -121,7 +121,7 @@ export class Panels {
       }
       land.set(b.land);
     };
-    const el = this.shell(NAMES[b0.kind][b0.level - 1], `${KIND[b0.kind]} · level ${b0.level}`,
+    const el = this.shell(b0.special === 'arena' ? 'Arena' : NAMES[b0.kind][b0.level - 1], b0.special === 'arena' ? 'Landmark · hosts match days' : `${KIND[b0.kind]} · level ${b0.level}`,
       h('div', { class: 'kv' }, r1, r2, b0.kind === 'res' ? mood.el : null, r3),
       h('div', { class: 'kv' }, h('div', { class: 'row' }, h('span', { class: 'k' }, 'Land value'), h('span', { class: 'v' }, b0.level < 3 ? 'drives upgrades' : 'maxed')), land.el),
       h('div', { class: 'empty' }, b0.access < 0 ? 'No road touches this lot. Connect it so people can get in and out.' : b0.level < 3 ? 'Good transit, parks and short commutes lift land value. Higher value lets it grow taller.' : 'Fully built up. Keep the commute short to hold the value.'),

@@ -16,7 +16,8 @@ const TOOLS: { id: ToolId; icon: string; label: string; sub: string; key: string
   { id: 'bus', icon: 'bus', label: 'Bus line', sub: 'Click roads to place stops', key: '4' },
   { id: 'metro', icon: 'metro', label: 'Metro line', sub: 'Elevated trains that skip traffic', key: '5' },
   { id: 'park', icon: 'park', label: 'Park', sub: `Calms the neighbourhood · ${money(COST.park)}`, key: '6' },
-  { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '7' },
+  { id: 'arena', icon: 'arena', label: 'Arena', sub: `Match days pack the roads · ${money(COST.arena)}`, key: '7' },
+  { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '8' },
 ];
 
 export class Hud {
@@ -149,7 +150,7 @@ export class Hud {
     const g = this.app.game;
     for (const [id, b] of this.toolBtns) {
       b.classList.toggle('on', this.app.tools.tool === id);
-      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'metro' && !g.unlocked.metro));
+      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'metro' && !g.unlocked.metro) || (id === 'arena' && !g.unlocked.arena));
     }
     this.el.polBtn.classList.toggle('lock', !g.unlocked.policies);
   }
@@ -225,6 +226,7 @@ export class Hud {
         bus: 'Click roads to place stops. A line needs at least two. Right-click undoes.',
         metro: 'Click open ground or roads to place stations. Track is laid between them.',
         park: 'Click or drag over empty ground. Parks raise land value nearby.',
+        arena: 'Click empty ground beside a road. The city holds a match every few days.',
         bulldoze: 'Click or drag over buildings, roads and stops to clear them.',
       };
       node = h('div', { class: 'context glass' },

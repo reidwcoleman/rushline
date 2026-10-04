@@ -102,6 +102,8 @@ export class View {
     game.on('accident', (t: number) => this.accidents.add(t));
     game.on('festival', (b: any) => { this.festival = { x: wx(b.x), z: wz(b.y) }; });
     game.on('festivalEnd', () => { this.festival = null; });
+    game.on('match', (b: any) => { this.festival = { x: wx(b.x), z: wz(b.y) }; });
+    game.on('matchEnd', () => { this.festival = null; });
     game.on('accidentClear', (t: number) => this.accidents.delete(t));
     game.on('gameOver', () => { this.rig.shake = 0.4; });
     game.on('sfx', (k: string) => { if (k === 'demolish') this.rig.shake = Math.max(this.rig.shake, 0.06); });

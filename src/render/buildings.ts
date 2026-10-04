@@ -464,6 +464,37 @@ function plant(r: () => number, v: number): Variant {
   return { geo, height: 1.25, smoke };
 }
 
+// ------------------------------------------------------------------------------ landmark
+
+function arena(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  b.floor(0, 0.016, 0, 0.98, 0.98, LOT_CONC);
+  const team = lin(0x2f5d9e), team2 = lin(0xe8b84a);
+  // outer wall with arches (windows) and a rising roof ring
+  b.paintW = 1;
+  b.cyl(0, 0.016, 0, 0.45, 0.42, 0.2, lin(0xe4e8ee), 28, { cap: false, win: W(0.09, 0.1, 0.5, 0.45) });
+  b.paintW = 0;
+  b.cyl(0, 0.216, 0, 0.455, 0.34, 0.06, lin(0xf6f7f9), 28, { cap: false });
+  // seating bowl: coloured tiers, inside the roof ring
+  for (let t = 0; t < 3; t++) b.cyl(0, 0.04 + t * 0.045, 0, 0.34 - t * 0.04, 0.32 - t * 0.04, 0.045, t % 2 ? team2 : team, 28, { cap: false });
+  b.cyl(0, 0.03, 0, 0.24, 0.24, 0.01, lin(0x3d8f46), 28);
+  // pitch lines
+  b.floor(0, 0.0415, 0, 0.3, 0.012, lin(0xf4f4ef)); b.floor(0, 0.0415, 0, 0.012, 0.18, lin(0xf4f4ef));
+  b.floor(-0.14, 0.0415, 0, 0.012, 0.18, lin(0xf4f4ef)); b.floor(0.14, 0.0415, 0, 0.012, 0.18, lin(0xf4f4ef));
+  // floodlight masts
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    b.cyl(sx * 0.36, 0.016, sz * 0.36, 0.011, 0.008, 0.46, lin(0x8a929c), 6, { cap: false });
+    b.box(sx * 0.36, 0.45, sz * 0.36, 0.08, 0.035, 0.08, lin(0xfff6dc), { emit: 5.5 });
+  }
+  // entrance canopy and sign
+  b.box(0, 0.016, 0.47, 0.22, 0.12, 0.05, lin(0xc9d1da));
+  b.box(0, 0.14, 0.49, 0.2, 0.04, 0.014, lin(0xffc54d), { emit: 2.2 });
+  void r;
+  const geo = b.geometry();
+  return { geo, height: 0.5, smoke: [] };
+}
+
 // ------------------------------------------------------------------------------ catalogue
 
 const MAKERS: Record<Kind, ((r: () => number, v: number) => Variant)[]> = {
@@ -472,7 +503,8 @@ const MAKERS: Record<Kind, ((r: () => number, v: number) => Variant)[]> = {
   ind: [workshop, factory, plant],
 };
 
-export function buildVariant(kind: Kind, level: number, variant: number): Variant {
+export function buildVariant(kind: Kind, level: number, variant: number, special?: string): Variant {
+  if (special === 'arena') return arena(mulberry32(5));
   const r = mulberry32(kind.charCodeAt(0) * 1000 + level * 100 + variant * 7 + 3);
   return MAKERS[kind][level - 1](r, variant);
 }
@@ -503,12 +535,12 @@ export class BuildingsView {
     scene.add(this.group);
   }
 
-  private pool(kind: Kind, level: number, variant: number): Pool {
-    const key = `${kind}${level}_${variant}`;
+  private pool(kind: Kind, level: number, variant: number, special?: string): Pool {
+    const key = special ? special : `${kind}${level}_${variant}`;
     let p = this.pools.get(key);
     if (p) return p;
-    const v = buildVariant(kind, level, variant);
-    const cap = 220;
+    const v = buildVariant(kind, level, variant, special);
+    const cap = special ? 4 : 220;
     const mesh = new THREE.InstancedMesh(v.geo, this.material, cap);
     mesh.count = 0;
     mesh.frustumCulled = false;
@@ -535,7 +567,7 @@ export class BuildingsView {
   }
 
   add(b: Building, now: number, animate = true) {
-    const p = this.pool(b.kind, b.level, b.variant);
+    const p = this.pool(b.kind, b.level, b.variant, b.special);
     const slot = p.mesh.count++;
     p.ids[slot] = b.id;
     const r = mulberry32(b.id * 9973);
@@ -590,7 +622,7 @@ export class BuildingsView {
   }
 
   heightOf(b: Building) {
-    return this.pool(b.kind, b.level, b.variant).variant.height;
+    return this.pool(b.kind, b.level, b.variant, b.special).variant.height;
   }
 
   update(now: number) {

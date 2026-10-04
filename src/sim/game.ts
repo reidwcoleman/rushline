@@ -8,13 +8,13 @@ import { CITY_NAMES } from './names.ts';
 import { DAY, dayOf, hourOf, type Ctx, type Building, type Stop, type Line } from './types.ts';
 
 export const COST = {
-  street: 12, avenue: 38, upgrade: 28, bridge: 60, park: 140, busStop: 80, bus: 200, station: 1000, track: 70, trackWater: 60, train: 900,
+  arena: 6000, street: 12, avenue: 38, upgrade: 28, bridge: 60, park: 140, busStop: 80, bus: 200, station: 1000, track: 70, trackWater: 60, train: 900,
   bulldoze: 25, expandBus: 220, expandStation: 600,
 };
 export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4, busStop: 3, bus: 16, station: 55, track: 3, train: 70 };
 
 export const MAX_LINES = 14;
-export const UNLOCK = { avenue: 200, policies: 350, metro: 600 };
+export const UNLOCK = { avenue: 200, policies: 350, metro: 600, arena: 1600 };
 
 export interface Cmd { ok: boolean; msg?: string; cost?: number }
 
@@ -79,7 +79,9 @@ export class Game {
   private stabT = 0;
   lastDay = 1;
   daysSurvived = 0;
-  unlocked = { avenue: false, policies: false, metro: false };
+  unlocked = { avenue: false, policies: false, metro: false, arena: false };
+  match: { tile: number; start: number; end: number; announced: boolean; started: boolean } | null = null;
+  nextMatchDay = 0;
 
   diff = 1;           // 0 relaxed, 1 standard, 2 rush
 
@@ -300,6 +302,7 @@ export class Game {
     const u = this.unlocked;
     if (!u.avenue && p >= UNLOCK.avenue) { u.avenue = true; if (!silent) { this.toast('Avenues unlocked: wider roads that carry twice the cars.', 'good'); this.emit('unlock', 'avenue'); } }
     if (!u.policies && p >= UNLOCK.policies) { u.policies = true; if (!silent) { this.toast('City policies unlocked.', 'good'); this.emit('unlock', 'policies'); } }
+    if (!u.arena && p >= UNLOCK.arena) { u.arena = true; if (!silent) { this.toast('Arena unlocked: match days pack the streets and pay well.', 'good'); this.emit('unlock', 'arena'); } }
     if (!u.metro && p >= UNLOCK.metro) { u.metro = true; if (!silent) { this.toast('Metro unlocked: elevated trains that skip traffic.', 'good'); this.emit('unlock', 'metro'); } }
   }
 
@@ -380,6 +383,21 @@ export class Game {
         this.toast('Street festival starting. Expect a crowd heading there.', 'info');
       }
     }
+    // arena match days
+    const arena = [...this.city.buildings.values()].find((b) => b.special === 'arena');
+    if (arena) {
+      const dayStart = Math.floor(t / DAY) * DAY;
+      if (!this.match && this.day >= this.nextMatchDay && hourOf(t) >= 9 && hourOf(t) < 14.5) {
+        this.match = { tile: arena.tile, start: dayStart + DAY * (18 / 24), end: dayStart + DAY * (19.6 / 24), announced: false, started: false };
+        this.toast('Match day at the arena tonight. Crowds will head over from about 18:00.', 'info');
+        this.match.announced = true;
+      }
+      const m = this.match;
+      if (m) {
+        if (!m.started && t >= m.start - DAY * 0.02) { m.started = true; this.city.matchTile = m.tile; this.city.matchUntil = m.end; this.emit('match', arena); this.toast('Kick-off soon. Thousands are on their way.', 'warn'); this.emit('sfx', 'alert'); }
+        if (t > m.end + DAY * 0.2) { this.match = null; this.city.matchTile = -1; this.nextMatchDay = this.day + 2 + (this.rand() < 0.5 ? 1 : 0); this.emit('matchEnd'); }
+      }
+    } else if (this.match) { this.match = null; this.city.matchTile = -1; }
     if (this.festival && t > this.festival.until) { this.festival = null; this.city.eventTile = -1; this.emit('festivalEnd'); }
   }
 
@@ -451,6 +469,23 @@ export class Game {
     this.emit('treesChanged');
     this.emit('sfx', 'build');
     return { ok: true, cost: COST.park };
+  }
+
+  placeArena(i: number): Cmd {
+    const w = this.world;
+    if (!this.unlocked.arena) return { ok: false, msg: `The arena unlocks at ${UNLOCK.arena.toLocaleString()} residents.` };
+    if ([...this.city.buildings.values()].some((b) => b.special === 'arena')) return { ok: false, msg: 'The city already has an arena.' };
+    if (!w.isUnlocked(i) || w.water[i] || !w.isEmpty(i) || w.rail[i]) return { ok: false, msg: 'Pick an empty tile.' };
+    const rf = this.city.roadFor({ x: tileX(i), y: tileY(i) });
+    if (rf.tile < 0) return { ok: false, msg: 'The arena needs a road beside it.' };
+    if (this.money < COST.arena) return { ok: false, msg: 'Not enough money.' };
+    this.spend(COST.arena);
+    this.city.addBuilding(tileX(i), tileY(i), 'com', 3, 'arena');
+    w.version.tiles++;
+    this.nextMatchDay = this.day + 1;
+    this.emit('sfx', 'build');
+    this.toast('Arena open. Match days draw big crowds, so get the transit ready.', 'good');
+    return { ok: true, cost: COST.arena };
   }
 
   bulldoze(i: number): Cmd {
@@ -658,7 +693,7 @@ export function serialize(g: Game): SaveData {
   const roads: number[] = [], parks: number[] = [];
   for (let i = 0; i < N * N; i++) { if (w.road[i]) roads.push(i, w.road[i]); if (w.park[i]) parks.push(i); }
   const code = { res: 0, com: 1, ind: 2 } as const;
-  const buildings = [...g.city.buildings.values()].map((b) => [b.x, b.y, code[b.kind], b.level, b.variant, b.rot, b.residents.length]);
+  const buildings = [...g.city.buildings.values()].map((b) => [b.x, b.y, b.special ? 3 : code[b.kind], b.level, b.variant, b.rot, b.residents.length]);
   const stops = g.transit.stops.map((s) => [s.tile, s.kind === 'bus' ? 0 : 1, s.name, s.cap] as [number, number, string, number]);
   const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length }));
   return {
@@ -682,7 +717,7 @@ export function restore(d: SaveData): Game {
   g.city.refreshAccess();
   const kinds = ['res', 'com', 'ind'] as const;
   for (const [x, y, k, level, variant, rot, res] of d.buildings) {
-    const b = g.city.addBuilding(x, y, kinds[k], level);
+    const b = k === 3 ? g.city.addBuilding(x, y, 'com', 3, 'arena') : g.city.addBuilding(x, y, kinds[k], level);
     b.variant = variant; b.rot = rot; b.born = d.t - 200; b.lastLevel = d.t - 100;
     for (let i = 0; i < res; i++) g.city.createPerson(b);
   }
@@ -695,7 +730,7 @@ export function restore(d: SaveData): Game {
     while (line.vehicles.length < l.veh) if (!g.transit.addVehicle(line)) break;
   }
   g.city.updateStats();
-  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = false;
+  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.arena = false;
   (g as any).updateUnlocks(true);
   g.daysSurvived = d.daysSurvived;
   g.emit('roadsChanged');
