@@ -12,6 +12,7 @@ const res = await page.evaluate(async (rounds) => {
   __hold(true);
   const g = __game, w = g.world, app = __app;
   g.money = 5e6;
+  for (const k of ['tram', 'ferry', 'gondola', 'metro']) g.unlocked[k] = true;
   const R = () => g.rand();
   const N = 40;
   const randTile = () => Math.floor(R() * N * N);
@@ -26,7 +27,7 @@ const res = await page.evaluate(async (rounds) => {
       else if (x < 0.32) g.bulldoze(randTile());
       else if (x < 0.38) { for (const d of w.districts) if (!d.unlocked) { g.unlockDistrict(d.index); break; } }
       else if (x < 0.5) { const a = randRoad(), b = randRoad(), c = randRoad(); if (a >= 0 && b >= 0 && c >= 0 && a !== b && b !== c) g.createBusLine([a, b, c]); }
-      else if (x < 0.56) { const a = randTile(), b = randTile(); g.createMetroLine([a, b]); }
+      else if (x < 0.56) { const m = ['metro', 'tram', 'ferry', 'gondola'][(R() * 4) | 0]; const shore = () => { for (let k = 0; k < 300; k++) { const t = randTile(); if (w.shore[t]) return t; } return randTile(); }; const pick = () => (m === 'tram' ? randRoad() : m === 'ferry' ? shore() : randTile()); const a = pick(), b = pick(); if (a >= 0 && b >= 0) g.createLine(m, [a, b]); app.tools.setMode(['bus', 'tram', 'metro', 'ferry', 'gondola'][(R() * 5) | 0]); g.refreshAdvice(); }
       else if (x < 0.62) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.addVehicle(l); }
       else if (x < 0.65) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.deleteLine(l); }
       else if (x < 0.7) g.placePark(randTile());

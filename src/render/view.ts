@@ -58,6 +58,7 @@ export class View {
   private envScene = new THREE.Scene();
   private envRT: THREE.WebGLRenderTarget | null = null;
   private envT = 0;
+  private envKey = -1;
   private wakeT = 0;
   private routesKey = '';
   private frameNo = 0;
@@ -173,13 +174,19 @@ export class View {
     else if (this.shiftApplied) { this.rig.camera.clearViewOffset(); this.shiftApplied = false; }
     this.tod.update(hour, this.rainAmt, dt);
     this.envT -= dt;
-    if (this.envT <= 0) {
-      this.envT = this.game.speed >= 4 ? 1.2 : 2.4;
-      const rt = this.pmrem.fromScene(this.envScene, 0, 1, 1000);
+    // regenerate the sky reflection only when the sky has moved enough to matter
+    const envKey = Math.round(hour * 2) / 2 + (this.rainAmt > 0.5 ? 100 : 0);
+    if (this.envT <= 0 && this.renderer.quality !== 'low' && (envKey !== this.envKey || !this.scene.environment)) {
+      this.envT = 2;
+      this.envKey = envKey;
+      const rt = this.pmrem.fromScene(this.envScene, 0, 1, 1000, { size: 128 } as any);
       this.envRT?.dispose();
       this.envRT = rt;
       this.scene.environment = rt.texture;
     }
+    // sky reflections are the first thing to go on a slow GPU
+    const useEnv = this.renderer.quality !== 'low';
+    if (!useEnv && this.scene.environment) this.scene.environment = null;
     this.scene.environmentIntensity = 0.36 - this.tod.night * 0.12;
     this.renderer.setExposure(1.0);
     this.rig.update(dt);
