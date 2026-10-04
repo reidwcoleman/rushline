@@ -16,6 +16,21 @@ export type Stage = 'child' | 'teen' | 'adult' | 'senior';
 export type TraitId = 'early' | 'night' | 'foodie' | 'home' | 'social' | 'driven' | 'green' | 'thrifty' | 'driver' | 'sporty' | 'grump' | 'sunny';
 export interface Needs { energy: number; hunger: number; fun: number; social: number; comfort: number }
 export interface LifeEntry { t: number; text: string }
+/** something a citizen has been told to do (or has arranged): go somewhere and stay a while */
+export interface Order {
+  kind: 'go' | 'visit' | 'date' | 'party' | 'wedding' | 'host';
+  dest: Building;
+  stay: number;           // hours to stay once there
+  label: string;
+  ph: 0 | 1 | 2;          // 0 not started, 1 travelling, 2 there
+  until: number;          // sim time to leave, once there
+  with?: number;          // the other person's id, for dates
+}
+export interface Buff { id: string; text: string; amt: number; until: number }
+export interface Wish { id: string; text: string }
+/** 0 single, 1 dating, 2 engaged, 3 married */
+export type Bond = 0 | 1 | 2 | 3;
+
 export interface Household { id: number; last: string; members: Person[]; home: Building }
 export interface WalkSeg { x0: number; z0: number; x1: number; z1: number; t0: number; dur: number; path: number[] | null; pi: number }
 
@@ -38,6 +53,7 @@ export interface Building {
   lastLevel: number;      // sim time of last level change
   cutoff: number;         // seconds without road access
   glow: number;           // render hint
+  partyUntil: number;     // sim time a party at this building ends, 0 none
   special?: Special;
   venue: Venue | null;    // what a commercial building is (shop, cafe, office ...)
   name: string;           // venue / works name, '' for homes
@@ -115,6 +131,12 @@ export interface Person {
   student: boolean;
   thought: string;
   born: number;           // sim time they arrived or were born
+  orders: Order[];        // what the player (or a plan) has them doing, in order
+  partner: number;        // person id, 0 none
+  bond: Bond;
+  since: number;          // sim time the bond began
+  buffs: Buff[];          // temporary mood effects
+  wish: Wish | null;      // what they hope for
 }
 
 export interface Stop {

@@ -176,6 +176,16 @@ export class Panels {
       h('div', { class: 'empty' }, tip),
       h('div', { class: 'actions' }, h('button', { class: 'btn danger sm', onClick: () => { const r = g.bulldoze(b0.tile); if (r.ok) this.app.tools.setSelection(null); else this.app.toast(r.msg ?? '', 'warn'); } }, `Demolish · ${money(COST.bulldoze)}`)));
     void moodColorHex;
+    // name your own places
+    if (b0.kind !== 'res' && b0.name && !b0.special) {
+      const h3 = el.querySelector('h3');
+      if (h3) {
+        const inp = h('input', { class: 'rename', value: b0.name, maxlength: 28, spellcheck: 'false', title: 'Click to rename' }) as HTMLInputElement;
+        inp.addEventListener('change', () => { const v = inp.value.trim(); if (v) b0.name = v; else inp.value = b0.name; });
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') inp.blur(); });
+        h3.replaceWith(inp);
+      }
+    }
     upd();
     return { el, update: upd };
   }

@@ -25,6 +25,22 @@ export const SERVICE = {
 } as const;
 export type ServiceKind = keyof typeof SERVICE;
 
+/** buildings you can place yourself with the Lots tool */
+export const LOTS = {
+  house:      { label: 'House',      icon: 'home',   cost: 450,  unlock: 0,    kind: 'res', level: 1, venue: null,     tag: 'A home for a family. People move in on their own.' },
+  apartments: { label: 'Apartments', icon: 'company', cost: 2400, unlock: 400,  kind: 'res', level: 2, venue: null,     tag: 'Many households in one block.' },
+  shop:       { label: 'Shop',       icon: 'cargo',  cost: 700,  unlock: 0,    kind: 'com', level: 1, venue: 'shop',   tag: 'Goods and a bit of company. Staffed by locals.' },
+  cafe:       { label: 'Cafe',       icon: 'hunger', cost: 900,  unlock: 60,   kind: 'com', level: 1, venue: 'cafe',   tag: 'Coffee, conversation and first dates.' },
+  diner:      { label: 'Diner',      icon: 'hunger', cost: 1000, unlock: 100,  kind: 'com', level: 1, venue: 'diner',  tag: 'The place for a proper meal.' },
+  bar:        { label: 'Bar',        icon: 'social', cost: 1300, unlock: 250,  kind: 'com', level: 1, venue: 'bar',    tag: 'Where grown-ups meet people.' },
+  gym:        { label: 'Gym',        icon: 'energy', cost: 1600, unlock: 300,  kind: 'com', level: 1, venue: 'gym',    tag: 'Sporty citizens love it.' },
+  cinema:     { label: 'Cinema',     icon: 'fun',    cost: 2400, unlock: 450,  kind: 'com', level: 1, venue: 'cinema', tag: 'The best night out and a date favourite.' },
+  office:     { label: 'Offices',    icon: 'briefcase', cost: 3200, unlock: 500, kind: 'com', level: 2, venue: 'office', tag: 'Many well-paid jobs. Everyone commutes here.' },
+  mall:       { label: 'Mall',       icon: 'wallet', cost: 5200, unlock: 1200, kind: 'com', level: 2, venue: 'mall',   tag: 'Shopping, food and crowds.' },
+} as const;
+export type LotKind = keyof typeof LOTS;
+export const LOT_ORDER = Object.keys(LOTS) as LotKind[];
+
 export const MAX_LINES = 14;
 export const UNLOCK = { avenue: 200, junction: 150, highway: 400, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, airport: SERVICE.airport.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
 
@@ -918,6 +934,32 @@ export class Game {
     return { ok: true, cost };
   }
 
+  lotCheck(kind: LotKind, i: number): string | null {
+    const w = this.world, def = LOTS[kind];
+    if (!this.lotUnlocked(kind)) return `${def.label} unlocks at ${def.unlock} residents.`;
+    if (!w.isUnlocked(i)) return 'Unlock this district first.';
+    if (w.water[i] || !w.isEmpty(i) || w.rail[i]) return 'Needs empty ground.';
+    if (this.city.roadFor({ x: tileX(i), y: tileY(i) }).tile < 0) return 'Needs a street or avenue beside it.';
+    return null;
+  }
+  lotUnlocked(kind: LotKind): boolean { return this.pop >= LOTS[kind].unlock; }
+
+  placeLot(kind: LotKind, i: number): Cmd {
+    const def = LOTS[kind];
+    const why = this.lotCheck(kind, i);
+    if (why) return { ok: false, msg: why };
+    if (this.money < def.cost) return { ok: false, msg: 'Not enough money. Need $' + def.cost + '.', cost: def.cost };
+    const b = this.city.addBuilding(tileX(i), tileY(i), def.kind, def.level, undefined, [], 0, def.venue ?? undefined);
+    this.spend(def.cost);
+    this.city.markDirty();
+    this.emit('sfx', 'build');
+    this.lotsPlaced++;
+    if (def.kind === 'res' && this.city.stats.demand.r > 0.25) this.city.createHousehold(b, 2 + (this.rand() < 0.5 ? 1 : 0), true);
+    return { ok: true, cost: def.cost };
+  }
+
+  lotsPlaced = 0;
+
   placePark(i: number): Cmd {
     const w = this.world;
     if (!w.isUnlocked(i)) return { ok: false, msg: 'Unlock this district first.' };
@@ -1387,7 +1429,7 @@ export interface SaveData {
   fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number>; contracts?: Contract[]; done?: number; ach?: string[]; borrowed?: boolean };
 }
 
-export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number }
+export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number; pt?: number; bd?: number; sn?: number }
 
 // save order: bus 0 and metro 1 match the first save format
 const SAVE_MODES: Mode[] = ['bus', 'metro', 'tram', 'ferry', 'gondola', 'truck', 'freight'];
@@ -1404,7 +1446,7 @@ export function serialize(g: Game): SaveData {
   const people: PersonSave[] = g.city.persons.map((p) => ({
     i: p.id, b: bIndex.get(p.home.id) ?? 0, h: p.hh.id, f: p.first, l: p.last, a: p.age, t: p.traits,
     n: [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort].map((v) => Math.round(v * 100) / 100),
-    x: Math.round(p.xp * 10) / 10, wl: Math.round(p.wallet), k: p.look, fr: p.friends, w: p.work ? bIndex.get(p.work.id) ?? -1 : -1, bt: Math.round(p.born),
+    x: Math.round(p.xp * 10) / 10, wl: Math.round(p.wallet), k: p.look, fr: p.friends, w: p.work ? bIndex.get(p.work.id) ?? -1 : -1, bt: Math.round(p.born), pt: p.partner, bd: p.bond, sn: Math.round(p.since),
   }));
   const stops = g.transit.stops.map((s) => [s.tile, SAVE_MODES.indexOf(s.kind), s.name, s.cap] as [number, number, string, number]);
   const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length, fare: l.fareMul }));
@@ -1465,7 +1507,14 @@ export function restore(d: SaveData): Game {
         else { wb.workers.push(p); g.city.refreshJob(p); }
       }
     }
-    for (const ps of d.people) { const p = byOld.get(ps.i); if (p) p.friends = ps.fr.map((f) => byOld.get(f)?.id).filter((x): x is number => x !== undefined); }
+    for (const ps of d.people) {
+      const p = byOld.get(ps.i);
+      if (!p) continue;
+      p.friends = ps.fr.map((f) => byOld.get(f)?.id).filter((x): x is number => x !== undefined);
+      const mate = ps.pt ? byOld.get(ps.pt) : undefined;
+      if (mate && ps.bd) { p.partner = mate.id; p.bond = ps.bd as Person['bond']; p.since = ps.sn ?? 0; }
+    }
+    for (const p of g.city.persons) if (p.partner && g.city.personById.get(p.partner)?.partner !== p.id) { p.partner = 0; p.bond = 0; }
   }
   for (const p of g.city.persons) g.city.occupy(p);
   if (d.fin) { g.loan = d.fin.loan; g.maint = d.fin.maint; g.autoRenew = d.fin.autoRenew; Object.assign(g.research, d.fin.research); g.contracts = (d.fin.contracts ?? []).map((c) => ({ ...c, last: 0 })); g.contractsDone = d.fin.done ?? 0; g.achieved = new Set(d.fin.ach ?? []); g.everBorrowed = !!d.fin.borrowed; for (const c of g.contracts) if (c.state === 'active') c.last = 0; }

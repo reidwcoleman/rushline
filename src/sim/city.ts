@@ -8,6 +8,7 @@ import {
   jobFor, careerTier, logLife, fullName, DISTRICT_NAMES,
 } from './people.ts';
 import type { Cargo } from './types.ts';
+import { Social } from './social.ts';
 import { SPEED_STREET } from './path.ts';
 import { WALK_SPEED } from './transit.ts';
 import type { Traffic } from './traffic.ts';
@@ -61,6 +62,7 @@ export class City {
     demand: { r: 0.5, c: 0.4, i: 0.3 }, buildings: 0, levels: [0, 0, 0], stuck: 0,
     adults: 0, kids: 0, seniors: 0, pupils: 0, mood: 0.7, smog: 0, schools: 0, clinics: 0,
   };
+  social = new Social(this);
   households = new Map<number, Household>();
   personById = new Map<number, Person>();
   /** every building that makes, takes or sells cargo */
@@ -100,7 +102,7 @@ export class City {
   /** research generation of a mode (cleaner vehicles), set by the game */
   cleanLevel: (mode: import('./modes.ts').Mode) => number = () => 0;
 
-  constructor(private ctx: Ctx, readonly traffic: Traffic, readonly transit: Transit) {
+  constructor(readonly ctx: Ctx, readonly traffic: Traffic, readonly transit: Transit) {
     traffic.onArrive = (v) => { if (v.person) this.arrive(v.person, v); };
     traffic.onStrand = (v) => { if (v.person) this.strand(v.person); };
   }
@@ -123,18 +125,18 @@ export class City {
     return { tile: best, dir: bd, all };
   }
 
-  addBuilding(x: number, y: number, kind: Kind, level = 1, special?: Special, foot: number[] = [], rotFoot = 0): Building {
+  addBuilding(x: number, y: number, kind: Kind, level = 1, special?: Special, foot: number[] = [], rotFoot = 0, venueOverride?: Venue): Building {
     const w = this.w;
     const tile = tileIdx(x, y);
     const rf = this.roadFor({ x, y });
     const variants = VARIANTS[kind][level - 1];
     const rand = this.ctx.rand;
     const fac = isIndustry(special);
-    const venue: Venue | null = kind === 'com' ? ((special as Venue | undefined) ?? rollVenue(rand, level)) : null;
+    const venue: Venue | null = kind === 'com' ? (venueOverride ?? (special as Venue | undefined) ?? rollVenue(rand, level)) : null;
     const b: Building = {
       id: this.nextB++, x, y, tile, kind, level, variant: Math.floor(rand() * variants),
       rot: rf.dir >= 0 ? rf.dir : 0, born: this.ctx.t, cap: CAPS[kind][level - 1], residents: [], workers: [], visitors: 0,
-      access: rf.tile, accessAll: rf.all, land: 0.3, happy: 0.8, lastLevel: this.ctx.t, cutoff: 0, glow: 0, special,
+      access: rf.tile, accessAll: rf.all, land: 0.3, happy: 0.8, lastLevel: this.ctx.t, cutoff: 0, glow: 0, partyUntil: 0, special,
       venue, name: kind === 'res' ? '' : fac ? facilityName(rand, special as keyof typeof NAME_PATTERNS) : venueName(rand, venue ?? 'ind'), guests: [], students: [], park: 0, clinic: 0,
       out: [0, 0, 0], stock: kind === 'com' && venue && sellsIdx({ kind, venue } as Building) >= 0 ? [8, 0, 8] : [0, 0, 0], eff: 1, made: 0, picked: 0,
       foot, rotFoot,
@@ -163,7 +165,9 @@ export class City {
       if (p.work === b) { p.work = null; p.student = false; p.title = ''; p.wage = 0; }
       if (p.at === b) { p.at = p.home; if (p.phase === 'none') p.state = 'home'; }
       if (p.tripFrom === b) p.tripFrom = p.home;
+      if (p.orders.length) p.orders = p.orders.filter((o) => o.dest !== b);
     }
+    this.social.active.delete(b);
     b.workers.length = 0; b.students.length = 0; b.guests.length = 0; b.visitors = 0;
     if (b.kind !== 'res' && lost.length) {
       for (const p of lost.slice(0, 6)) logLife(p, this.ctx.t, `Lost ${p.stage === 'adult' ? 'their job' : 'their school'} when ${b.name || 'the workplace'} closed.`);
@@ -230,7 +234,7 @@ export class City {
       workDay: 0, leisureEnd: 0, remote: false, charged: false, at: home,
       first: spec.first ?? firstName(r), last: hh.last, age, stage, hh, traits, needs: freshNeeds(r), mood: 0.7, look: rollLook(r),
       title: '', wage: 0, xp: stage === 'adult' ? Math.floor(r() * 10) : 0, wallet: 20 + Math.floor(r() * 120), friends: [], log: [], ride: null, walk: null,
-      student: false, thought: '', born: this.ctx.t, car: null,
+      student: false, thought: '', born: this.ctx.t, car: null, orders: [], partner: 0, bond: 0, since: 0, buffs: [], wish: null,
     };
     if (has(p, 'driver')) p.carBias *= 0.82;
     if (has(p, 'green')) p.carBias *= 1.25;
@@ -336,6 +340,7 @@ export class City {
     p.student = false;
     this.refreshJob(p);
     logLife(p, this.ctx.t, `Started work as ${p.title.toLowerCase()} at ${bestB.name}.`);
+    this.social.grant(p, 'job');
     return true;
   }
 
@@ -552,6 +557,7 @@ export class City {
       case 'none': break;
       default: return;
     }
+    if (p.orders.length && this.social.run(p)) return;
     // schedule
     const t = this.ctx.t;
     if (p.state === 'home') {
@@ -635,6 +641,7 @@ export class City {
     this.visits++;
     b.guests.push(p);
     b.visitors = b.guests.length;
+    if (b.kind === 'res') { this.social.visited(p, b); return; }
     const v = VENUES[b.venue ?? 'shop'];
     const sIdx = sellsIdx(b);
     if (sIdx >= 0) {
@@ -650,8 +657,10 @@ export class City {
         logLife(p, this.ctx.t, `Made a friend: ${fullName(o)}, at ${b.name}.`);
         logLife(o, this.ctx.t, `Made a friend: ${fullName(p)}, at ${b.name}.`);
         this.pushFeed(p, `${p.first} and ${o.first} became friends at ${b.name}.`, 'good', 'friend', 6);
+        this.social.grant(p, 'friend'); this.social.grant(o, 'friend');
       }
     }
+    this.social.visited(p, b);
   }
   private leaveVenue(p: Person) {
     const at = p.at;
@@ -781,6 +790,9 @@ export class City {
       const atHome = idle && p.state === 'home';
       const sleeping = atHome && this.sleepWindow(p, hour);
       const v = idle && p.state === 'leisure' && p.at && p.at.venue ? VENUES[p.at.venue] : null;
+      const spot = idle && (p.state === 'leisure' || p.state === 'home') ? (p.at ?? p.home) : null;
+      const party = !!spot && spot.partyUntil > this.ctx.t;
+      const visiting = idle && p.state === 'leisure' && !!p.at && p.at.kind === 'res';
       const working = idle && p.state === 'work' && p.at === p.work;
       // energy
       n.energy += (sleeping ? 0.22 : -0.034) * hrs;
@@ -789,24 +801,29 @@ export class City {
       if (atHome && meal && !sleeping) hg += 0.95;
       else if (working && lunch) hg += 0.62;
       else if (v) hg += v.hunger;
+      if (party) hg += 0.4;
       n.hunger += hg * hrs;
       // fun
       let fn = sleeping ? -0.005 : -0.032;
       if (atHome && !sleeping) fn += 0.03 * (1 + 1.5 * p.home.park);
       if (v) fn += v.fun + (has(p, 'foodie') ? v.hunger * 0.15 : 0);
+      else if (visiting) fn += 0.22;
+      if (party) fn += 0.7;
       n.fun += fn * hrs;
       // social
       let sc = sleeping ? 0 : -0.03 * (has(p, 'home') ? 0.65 : has(p, 'social') ? 1.35 : 1);
       if (atHome && !sleeping) { let mates = 0; for (const m of p.hh.members) if (m !== p && m.phase === 'none' && m.state === 'home') mates++; sc += 0.04 * Math.min(2, mates); }
       else if (working) sc += 0.03;
       else if (v) { let fr = 1; for (let k = 0; k < p.at!.guests.length && k < 12; k++) if (p.friends.includes(p.at!.guests[k].id)) { fr = 1.4; break; } sc += v.social * fr * (p.at!.guests.length > 1 ? 1 : 0.5); }
+      if (visiting) sc += 0.5;
+      if (party) sc += 0.9;
       n.social += sc * hrs;
       // comfort drifts toward how their home, commute and finances feel
       const school = p.stage === 'child' || p.stage === 'teen' ? 0 : 0;
       const target = 0.4 + 0.42 * p.home.land + 0.2 * p.sat - 0.16 * this.stats.smog - (p.wallet < 0 ? 0.15 : 0) + 0.06 * p.home.clinic * (p.stage === 'senior' ? 2 : 1) + school;
       n.comfort += (clamp(target) - n.comfort) * Math.min(1, 0.15 * hrs);
       n.energy = clamp(n.energy); n.hunger = clamp(n.hunger); n.fun = clamp(n.fun); n.social = clamp(n.social); n.comfort = clamp(n.comfort);
-      p.mood = moodOf(p);
+      p.mood = clamp(moodOf(p) + this.social.buffSum(p));
     }
   }
 
@@ -827,7 +844,7 @@ export class City {
           if (j.title !== p.title) {
             const was = p.title;
             p.title = j.title; p.wage = j.wage;
-            if (was) { logLife(p, t, `Promoted to ${j.title.toLowerCase()}.`); this.pushFeed(p, `${fullName(p)} was promoted to ${j.title.toLowerCase()} at ${p.work!.name}.`, 'good', 'promo', 8); }
+            if (was) { this.social.grant(p, 'promo'); logLife(p, t, `Promoted to ${j.title.toLowerCase()}.`); this.pushFeed(p, `${fullName(p)} was promoted to ${j.title.toLowerCase()} at ${p.work!.name}.`, 'good', 'promo', 8); }
           } else p.wage = j.wage;
         } else if (!p.work) p.wallet += 3;
         p.wallet -= 5 + 9 * p.home.land;
@@ -848,6 +865,7 @@ export class City {
         p.friends.push(o.id); o.friends.push(p.id);
         logLife(p, t, `Became friends with ${fullName(o)} from work.`);
         logLife(o, t, `Became friends with ${fullName(p)} from work.`);
+        this.social.grant(p, 'friend'); this.social.grant(o, 'friend');
       }
     }
     // babies
@@ -860,14 +878,16 @@ export class City {
       if (mood / hh.members.length < 0.5 || r() > 0.13) continue;
       const baby = this.createPerson(hh.home, { age: 0, hh });
       logLife(baby, t, `Born in ${this.addressOf(hh.home)}.`);
-      for (const q of parents) logLife(q, t, `Welcomed a baby: ${baby.first}.`);
+      for (const q of parents) { logLife(q, t, `Welcomed a baby: ${baby.first}.`); this.social.grant(q, 'baby'); this.social.addBuff(q, 'baby', 'New baby', 0.1, 3); }
       this.pushFeed(baby, `A baby, ${baby.first}, was born to the ${hh.last} family.`, 'good', 'birth', 5);
     }
+    this.social.dayTick(day);
   }
 
   private birthday(p: Person) {
     const r = this.ctx.rand, t = this.ctx.t;
     p.age++;
+    this.social.birthday(p);
     const ns = stageOf(p.age);
     if (p.age === 5 && p.stage === 'child') { this.assignSchool(p); }
     if (ns !== p.stage) {
@@ -895,6 +915,7 @@ export class City {
     const t = this.ctx.t;
     for (const m of p.hh.members) if (m !== p) { m.needs.comfort = clamp(m.needs.comfort - 0.18); m.needs.social = clamp(m.needs.social - 0.1); logLife(m, t, `${fullName(p)} passed away.`); }
     for (const f of p.friends) { const o = this.persons.find((q) => q.id === f); if (o) { o.friends = o.friends.filter((x) => x !== p.id); logLife(o, t, `${fullName(p)} passed away.`); } }
+    this.social.widowed(p);
     this.pushFeed(p, `${fullName(p)}, ${p.age}, passed away.`, 'warn', 'death', 6);
     this.leaveVenue(p);
     this.leaveWork(p);
@@ -910,6 +931,8 @@ export class City {
     const verb = (st: Person['state']) => (st === 'toWork' ? (p.student ? 'school' : 'work') : st === 'toHome' ? 'home' : dest);
     const to = verb(p.state);
     const lineName = p.legs?.[p.leg]?.line.name ?? 'the line';
+    const od = p.orders[0];
+    if (od && od.ph === 2 && p.phase === 'none') return od.label;
     switch (p.phase) {
       case 'drive': return `Driving ${to === 'home' ? 'home' : 'to ' + to}`;
       case 'ride': return `Riding ${lineName} ${to === 'home' ? 'home' : 'to ' + to}`;
@@ -1134,6 +1157,7 @@ export class City {
     if (this.upT > 1.6) { this.upT = 0; this.upgradeStep(); }
     this.statT += dt;
     if (this.statT > 1) { this.statT = 0; this.updateStats(); }
+    this.social.tick(dt);
     this.needsT += dt;
     if (this.needsT >= 1) { this.updateNeeds(this.needsT); this.industryTick(this.needsT); this.needsT = 0; }
   }

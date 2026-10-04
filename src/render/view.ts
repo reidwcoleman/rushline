@@ -22,6 +22,7 @@ import { AirView } from './air.ts';
 import { SignalView } from './signals.ts';
 import type { Person } from '../sim/types.ts';
 
+const CONFETTI: [number, number, number][] = [[1, 0.45, 0.62], [1, 0.82, 0.25], [0.35, 0.8, 0.95], [0.5, 0.9, 0.5], [0.8, 0.55, 1]];
 export type OverlayMode = 'none' | 'traffic' | 'transit' | 'happy';
 
 export class View {
@@ -63,6 +64,7 @@ export class View {
   private accidents = new Set<number>();
   private festival: { x: number; z: number } | null = null;
   private happyDirty = true;
+  private partyT = 0;
   private happyTimer = 0;
   private cableDirtyAt = -1;
   private pmrem: THREE.PMREMGenerator;
@@ -250,6 +252,18 @@ export class View {
       }
     }
     if (this.festival) this.overlay.addRing(this.festival.x, this.festival.z, 1.1 + Math.sin(this.time * 3) * 0.08, 0xffc54d, 0.95, 0.9, 1.2);
+    // parties: a pink glow on the house and confetti over the roof
+    this.partyT -= dt;
+    const spawnConfetti = this.partyT <= 0 && game.speed > 0;
+    if (spawnConfetti) this.partyT = 0.16;
+    for (const b of game.city.social.active) {
+      const x = wx(b.x), z = wz(b.y);
+      this.overlay.addRing(x, z, 0.62 + Math.sin(this.time * 4 + b.id) * 0.06, 0xff7aa8, 0.85, 0.5, 2.4);
+      if (spawnConfetti) {
+        const col = CONFETTI[(Math.random() * CONFETTI.length) | 0];
+        this.fx.puff(x + (Math.random() - 0.5) * 0.35, this.buildings.heightOf(b) + 0.05, z + (Math.random() - 0.5) * 0.35, { vx: (Math.random() - 0.5) * 0.45, vz: (Math.random() - 0.5) * 0.45, vy: 0.55 + Math.random() * 0.3, max: 1.3, s0: 0.04, s1: 0.07, c: col, a: 0.95 });
+      }
+    }
     this.overlay.flushRings();
     const beacons: { x: number; z: number; color: number }[] = [];
     for (const t of this.accidents) {

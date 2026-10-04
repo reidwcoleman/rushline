@@ -47,11 +47,17 @@ export function citizenPanel(P: Panels, id: number): Built {
   const traits = h('div', { class: 'chips' });
   const wants = h('div', { class: 'chips' });
   const family = h('div', { class: 'chips' });
+  const wishEl = h('div', { class: 'wish' });
+  const moodlets = h('div', { class: 'chips moodlets' });
+  const doRow = h('div', { class: 'chips acts' });
+  const orderEl = h('div', { class: 'orders' });
+  let doKey = '', doAt = 0, lastActs: ReturnType<typeof city.social.actionsFor> = [];
   const [rHome, vHome] = P.row('Home', '');
   const [rWork, vWork] = P.row('Work', '');
   const [rPay, vPay] = P.row('Pay', '');
   const [rCash, vCash] = P.row('Cash', '');
   const [rFr, vFr] = P.row('Friends', '');
+  const [rLove, vLove] = P.row('Partner', '');
   const story = h('div', { class: 'story' });
   const followBtn = h('button', { class: 'btn sm primary', onClick: () => { app.toggleFollow(); upd(); } }, 'Follow');
   let lastLook = -1, lastMoodBand = -1;
@@ -79,6 +85,44 @@ export function citizenPanel(P: Panels, id: number): Built {
       family.append(h('button', { class: 'chip', onClick: () => app.selectPerson(m) }, h('i', { style: { background: moodColorHex(m.mood) } }), `${m.first}, ${m.age}`));
     }
     if (!family.childElementCount) family.append(h('span', { class: 'empty', style: { padding: '0' } }, 'Lives alone.'));
+    // wish and moodlets
+    clear(wishEl);
+    if (p.wish) wishEl.append(icon('spark'), h('span', {}, `Wish: ${p.wish.text}`));
+    wishEl.style.display = p.wish ? '' : 'none';
+    const ml = city.social.moodlets(p);
+    const mkey = ml.map((m) => m.text).join('|');
+    if ((moodlets as any)._k !== mkey) {
+      (moodlets as any)._k = mkey;
+      clear(moodlets);
+      for (const m of ml.slice(0, 8)) moodlets.append(h('span', { class: 'chip ml ' + (m.amt >= 0 ? 'up' : 'down'), title: `${m.amt >= 0 ? '+' : ''}${Math.round(m.amt * 100)}% mood` }, m.text));
+    }
+    // what you can ask of them
+    const nowMs = performance.now();
+    if (nowMs - doAt > 600 || !lastActs.length) { doAt = nowMs; lastActs = city.social.actionsFor(p); }
+    const akey = lastActs.map((a) => a.id + a.label + a.ok).join('|');
+    if (akey !== doKey) {
+      doKey = akey;
+      clear(doRow);
+      for (const a of lastActs) {
+        const b = h('button', { class: 'chip act' + (a.ok ? '' : ' off'), title: a.ok ? a.sub : a.why ?? a.sub, onClick: () => {
+          if (!a.ok) { app.toast(a.why ?? a.sub, 'info'); return; }
+          const msg = city.social.perform(p, a.id);
+          if (msg) { app.toast(msg, 'good'); app.sound.sfx('tick'); } else { app.toast('They cannot do that right now.', 'warn'); app.sound.sfx('error'); }
+          doKey = ''; upd();
+        } }, a.label);
+        doRow.append(b);
+      }
+      doRow.append(h('button', { class: 'chip act send', title: 'Click a building on the map', onClick: () => app.tools.startSend(id) }, icon('send'), 'Send somewhere'));
+    }
+    clear(orderEl);
+    if (p.orders.length) {
+      for (const o of p.orders) orderEl.append(h('div', { class: 'ord' }, h('i', { class: o.ph === 2 ? 'there' : o.ph === 1 ? 'going' : '' }), h('span', {}, o.label), h('small', {}, o.ph === 2 ? 'there now' : o.ph === 1 ? 'on the way' : 'next')));
+      orderEl.append(h('button', { class: 'btn sm ghost', onClick: () => { city.social.cancel(p); upd(); } }, 'Let them do their own thing'));
+    } else orderEl.append(h('div', { class: 'free' }, 'Free will: they follow their own plans.'));
+    const mate = city.social.partnerOf(p);
+    vLove.textContent = mate ? `${mate.first} · ${p.bond === 3 ? 'married' : p.bond === 2 ? 'engaged' : 'dating'}` : p.stage === 'adult' || p.stage === 'senior' ? 'single' : '–';
+    vLove.style.cursor = mate ? 'pointer' : '';
+    vLove.onclick = () => { if (mate) app.selectPerson(mate); };
     vHome.textContent = city.addressOf(p.home);
     vHome.style.cursor = 'pointer';
     vHome.onclick = () => app.view.rig.focus(p.home.x - 20 + 0.5, p.home.y - 20 + 0.5, 14);
@@ -101,11 +145,13 @@ export function citizenPanel(P: Panels, id: number): Built {
     h('div', { class: 'actions' }, followBtn,
       h('button', { class: 'btn sm', onClick: () => app.view.rig.focus(p0.home.x - 20 + 0.5, p0.home.y - 20 + 0.5, 14) }, 'Home'),
       h('button', { class: 'btn sm', onClick: () => { const p = city.personById.get(id); if (p?.work) app.view.rig.focus(p.work.x - 20 + 0.5, p.work.y - 20 + 0.5, 14); } }, 'Work')),
-    h('div', { class: 'live' }, h('div', { class: 'k' }, 'Right now'), now, thought),
+    h('div', { class: 'live' }, h('div', { class: 'k' }, 'Right now'), now, thought, wishEl),
+    h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Do something'), doRow, orderEl),
     h('div', { class: 'needs' }, ...needs.map((n) => n.row)),
+    h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Mood'), moodlets),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Traits'), traits),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Wants'), wants),
-    h('div', { class: 'kv' }, rHome, rWork, rPay, rCash, rFr),
+    h('div', { class: 'kv' }, rHome, rWork, rPay, rCash, rFr, rLove),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Household'), family),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Life so far'), story));
   upd();
@@ -132,6 +178,7 @@ export function directoryPanel(P: Panels): Built {
     summary.append(
       h('div', { class: 'row' }, h('span', { class: 'k' }, 'Average mood'), h('span', { class: 'v' }, moodWord(s.mood))), mood.el,
       h('div', { class: 'row' }, h('span', { class: 'k' }, 'Air quality'), h('span', { class: 'v', style: { color: s.smog > 0.55 ? 'var(--red)' : s.smog > 0.3 ? 'var(--amber)' : 'var(--green)' } }, s.smog > 0.55 ? 'Smoggy' : s.smog > 0.3 ? 'Hazy' : 'Clean')),
+      h('div', { class: 'row' }, h('span', { class: 'k' }, 'Couples'), h('span', { class: 'v' }, (() => { const c = city.social.couples(); return `${c.dating} dating · ${c.engaged} engaged · ${c.married} married`; })())),
       h('div', { class: 'tri' },
         h('div', {}, h('b', { class: 'num' }, String(s.adults)), h('span', {}, 'Adults')),
         h('div', {}, h('b', { class: 'num' }, String(s.kids)), h('span', {}, 'Young')),

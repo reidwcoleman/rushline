@@ -1,7 +1,7 @@
 // HUD: top bar, toolbar, overlay switch, speed, toasts, context card and world-anchored labels.
 import * as THREE from 'three';
 import { h, icon, clear, money, fmt, clock } from './dom.ts';
-import { COST, GOALS, UNLOCK, SERVICE } from '../sim/game.ts';
+import { COST, GOALS, UNLOCK, SERVICE, LOTS, LOT_ORDER } from '../sim/game.ts';
 import { moodColorHex, fullName } from '../sim/people.ts';
 import { CARGO_INFO, CARGO_LIST, isIndustry, sellsIdx, FACILITY } from '../sim/industry.ts';
 import { DAY, hourOf, dayOf } from '../sim/types.ts';
@@ -20,6 +20,7 @@ const TOOLS: { id: ToolId; icon: string; label: string; sub: string; key: string
   { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '7' },
   { id: 'service', icon: 'school', label: 'Services', sub: 'Schools, clinics, airport', key: '8' },
   { id: 'junction', icon: 'junction', label: 'Junctions', sub: 'Roundabouts, signals, highway interchanges', key: '0' },
+  { id: 'lots', icon: 'lots', label: 'Lots', sub: 'Place houses, cafes, shops and more yourself', key: 'V' },
 ];
 
 export class Hud {
@@ -252,7 +253,7 @@ export class Hud {
     const t = this.app.tools, g = this.app.game;
     let key: string = t.tool;
     const d = t.draft;
-    const sig = `${t.tool}|${t.jmode}|${g.unlocked.avenue}${g.unlocked.highway}${g.unlocked.junction}|${t.mode}|${t.group}|${g.unlocked.truck}${g.unlocked.freight}|${t.service}|${g.unlocked.school}${g.unlocked.clinic}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
+    const sig = `${t.tool}|${t.jmode}|${t.lot}|${g.pop >= 60 ? Math.floor(g.pop / 150) : 0}|${g.unlocked.avenue}${g.unlocked.highway}${g.unlocked.junction}|${t.mode}|${t.group}|${g.unlocked.truck}${g.unlocked.freight}|${t.service}|${g.unlocked.school}${g.unlocked.clinic}|${t.autoStops}|${d ? d.tiles.join(',') + (d.extend ? 'e' + d.extend.id : '') : ''}|${Math.floor(g.money / 50)}|${g.pop >= 150}${g.unlocked.tram}${g.unlocked.ferry}${g.unlocked.gondola}${g.unlocked.metro}`;
     if (!force && sig === this.ctxSig && this.context) return;
     this.ctxSig = sig;
     let node: HTMLElement | null = null;
@@ -324,6 +325,20 @@ export class Hud {
       node = h('div', { class: 'context glass tcontext' }, row,
         h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: t.tool === 'highway' ? '#34c58a' : t.tool === 'avenue' ? '#f2b84b' : '#cdd3dc' } }),
           h('div', { class: 't' }, h('b', {}, t.tool === 'highway' ? 'Highway' : t.tool === 'avenue' ? 'Avenue' : 'Street'), h('span', {}, tips[t.tool])),
+          h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
+    } else if (t.tool === 'lots') {
+      key += 'lot' + t.lot;
+      const row = h('div', { class: 'mode-row lots' });
+      for (const k of LOT_ORDER) {
+        const d = LOTS[k], open = g.lotUnlocked(k);
+        const chip = h('button', { class: 'mchip' + (t.lot === k ? ' on' : '') + (open ? '' : ' lock'), onClick: () => t.setLot(k) }, icon(open ? d.icon : 'lock'), h('span', {}, d.label), h('small', {}, open ? money(d.cost) : String(d.unlock)));
+        chip.style.setProperty('--mc', d.kind === 'res' ? '#7cc4ff' : '#f2b84b');
+        row.append(chip);
+      }
+      const ld = LOTS[t.lot];
+      node = h('div', { class: 'context glass tcontext' }, row,
+        h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: ld.kind === 'res' ? '#7cc4ff' : '#f2b84b' } }),
+          h('div', { class: 't' }, h('b', {}, `${ld.label} · ${money(ld.cost)}`), h('span', {}, `${ld.tag} Click empty ground beside a street. Click again to build more.`)),
           h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
     } else if (t.tool === 'junction') {
       key += 'jct' + t.jmode;
@@ -512,6 +527,11 @@ export class Hud {
   /** a hungry, tired, stuck or delighted citizen shows it above their head */
   private emoteOf(p: import('../sim/types.ts').Person): { ic: string; c: string } | null {
     const n = p.needs;
+    if (p === this.app.view.focusPerson) {
+      const o = p.orders[0];
+      if (o && o.ph === 2 && o.kind === 'date') return { ic: 'heart', c: '#ff7aa8' };
+      if (o && o.ph === 2 && (o.kind === 'party' || o.kind === 'wedding' || o.kind === 'host')) return { ic: 'party', c: '#ffd24d' };
+    }
     if (p.phase === 'wait' && this.app.game.t - p.waitStart > 35) return { ic: 'warn', c: '#ff7a6b' };
     if (p.phase === 'drive' && p.car && p.car.stuck > 4) return { ic: 'warn', c: '#ff7a6b' };
     if (n.hunger < 0.22) return { ic: 'hunger', c: '#ffb02e' };
@@ -542,7 +562,7 @@ export class Hud {
       const e = this.emoteOf(p);
       if (!e) continue;
       const w = v.citizens.where(p);
-      if (w.inside) continue;
+      if (w.inside && p !== v.focusPerson) continue;
       const sp = rig.toScreen(this.tmpV.set(w.x, w.y + 0.2, w.z));
       if (!sp.visible || sp.x < 0 || sp.x > innerWidth || sp.y < 0 || sp.y > innerHeight) continue;
       seen.add(id);

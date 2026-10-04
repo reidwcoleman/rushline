@@ -1,5 +1,5 @@
 // Random-command fuzz: node --experimental-transform-types tools/fuzz.ts [seed] [days]
-import { Game } from '../src/sim/game.ts';
+import { Game, LOT_ORDER } from '../src/sim/game.ts';
 import { N, tileIdx, DX, DY, inMap } from '../src/sim/world.ts';
 import { DAY } from '../src/sim/types.ts';
 import { MODE_ORDER, type Mode } from '../src/sim/modes.ts';
@@ -29,8 +29,21 @@ function randNearSite(wantRoad: boolean) {
 }
 function randSpot(m: Mode) { return m === 'bus' || m === 'tram' ? randRoad() : m === 'truck' ? randNearSite(true) : m === 'freight' ? randNearSite(false) : m === 'ferry' ? randShore() : randTile(); }
 const FUZZ_MODES: Mode[] = [...MODE_ORDER.slice(1), 'truck', 'freight'];
+function socialOp() {
+  const c = g.city, S = c.social;
+  const p = c.persons[(R() * c.persons.length) | 0];
+  if (!p) return;
+  const k = R();
+  if (k < 0.5) { const acts = S.actionsFor(p).filter((a) => a.ok); const a = acts[(R() * acts.length) | 0]; if (a) S.perform(p, a.id); }
+  else if (k < 0.62) S.cancel(p);
+  else if (k < 0.75) { const b = [...c.buildings.values()][(R() * c.buildings.size) | 0]; if (b) S.order(p, { kind: 'go', dest: b, stay: 1, label: 'fuzz' }, R() < 0.5); }
+  else if (k < 0.85) { const q = c.persons[(R() * c.persons.length) | 0]; if (q && q !== p && p.stage === 'adult' && q.stage === 'adult' && !p.bond && !q.bond) S.startDating(p, q); }
+  else if (k < 0.92) { const m = S.partnerOf(p); if (m) S.breakUp(p, m); }
+  else g.placeLot(LOT_ORDER[(R() * LOT_ORDER.length) | 0], randTile());
+}
 function act() {
   ops++;
+  if (R() < 0.18) { socialOp(); return; }
   (globalThis as any).__lastop = 'start';
   let r = R();
   if (gentle && r > 0.36 && r < 0.48) r = 0.5; // fewer bulldozes
@@ -93,6 +106,9 @@ function check() {
   }
   for (const p of g.city.persons) {
     if (p.dead) throw new Error('dead person in list');
+    for (const o of p.orders) if (!g.city.buildings.has(o.dest.id)) throw new Error('order to a removed building');
+    if (p.partner) { const m = g.city.personById.get(p.partner); if (m && m.partner && m.partner !== p.id) throw new Error('one-sided partner'); }
+    if (p.hh.home !== p.home) throw new Error('household and home differ');
     if (!g.city.personById.has(p.id)) throw new Error('person index mismatch');
     if (p.hh.members.indexOf(p) < 0) throw new Error('person not in household');
     for (const k of ['energy', 'hunger', 'fun', 'social', 'comfort'] as const) if (!(p.needs[k] >= 0 && p.needs[k] <= 1)) throw new Error('need out of range ' + k + ' ' + p.needs[k]);

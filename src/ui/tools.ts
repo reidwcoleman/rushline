@@ -1,5 +1,5 @@
 // Tools and input: pointer / keyboard handling, drafting roads and lines, selection and previews.
-import { Game, COST, UNLOCK, SERVICE, type ServiceKind } from '../sim/game.ts';
+import { Game, COST, UNLOCK, SERVICE, LOTS, type ServiceKind, type LotKind } from '../sim/game.ts';
 import { N, HALF, tileIdx, tileX, tileY, wx, wz, inMap, DX, DY, type World } from '../sim/world.ts';
 import { MODES, MODE_ORDER, CARGO_ORDER, isRoadMode, isCargoMode, type Mode } from '../sim/modes.ts';
 import { isIndustry, CATCH } from '../sim/industry.ts';
@@ -10,8 +10,8 @@ import { TRACK_Y } from '../render/fleet.ts';
 import { money } from './dom.ts';
 import { venueLabel } from '../sim/people.ts';
 
-export type ToolId = 'inspect' | 'road' | 'avenue' | 'highway' | 'transit' | 'park' | 'arena' | 'bulldoze' | 'service' | 'junction';
-export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'highway', 'transit', 'park', 'arena', 'bulldoze', 'service', 'junction'];
+export type ToolId = 'inspect' | 'road' | 'avenue' | 'highway' | 'transit' | 'park' | 'arena' | 'bulldoze' | 'service' | 'junction' | 'lots';
+export const TOOL_ORDER: ToolId[] = ['inspect', 'road', 'avenue', 'highway', 'transit', 'park', 'arena', 'bulldoze', 'service', 'junction', 'lots'];
 export const isRoadTool = (t: ToolId) => t === 'road' || t === 'avenue' || t === 'highway';
 /** what the junction tool does on click */
 export type JMode = 'roundabout' | 'signals' | 'plain' | 'ramp';
@@ -28,6 +28,9 @@ export class Tools {
   group: 'people' | 'cargo' = 'people';
   service: ServiceKind = 'school';
   jmode: JMode = 'roundabout';
+  lot: LotKind = 'house';
+  /** a citizen waiting to be told where to go: the next click on a building sends them */
+  sendFor: number | null = null;
   lastRoad: ToolId = 'road';
   autoStops = true;
   hover: { tile: number; x: number; z: number } | null = null;
@@ -88,6 +91,15 @@ export class Tools {
     if (t === 'highway' && !this.game.unlocked.highway) { this.app.toast(`Highways unlock at ${UNLOCK.highway} residents.`, 'info'); this.app.sound.sfx('error'); return; }
     this.cancelDraft();
     this.tool = t; this.lastRoad = t; this.drag = null; this.selection = null;
+    this.app.sound.sfx('click');
+    this.app.hud.refreshTools();
+    this.app.panels.sync();
+    this.refreshPreview(true);
+  }
+
+  setLot(k: LotKind) {
+    if (!this.game.lotUnlocked(k)) { this.app.toast(`${LOTS[k].label} unlocks at ${LOTS[k].unlock} residents.`, 'info'); this.app.sound.sfx('error'); return; }
+    this.lot = k; this.tool = 'lots'; this.selection = null;
     this.app.sound.sfx('click');
     this.app.hud.refreshTools();
     this.app.panels.sync();
@@ -246,6 +258,7 @@ export class Tools {
   }
 
   private rightClick() {
+    if (this.sendFor !== null) { this.cancelSend(); return; }
     if (this.draft) {
       if (this.draft.tiles.length) { this.draft.tiles.pop(); this.refreshPreview(true); this.app.hud.refreshContext(); this.app.sound.sfx('tick'); }
       else this.cancelDraft();
@@ -263,6 +276,12 @@ export class Tools {
       case 'road': case 'avenue': case 'highway':
         this.drag = { start: t, cur: t, tiles: [t], paint: false };
         break;
+      case 'lots': {
+        const r = this.game.placeLot(this.lot, t);
+        if (!r.ok) { this.app.toast(r.msg ?? 'Cannot build there.', 'warn'); this.app.sound.sfx('error'); }
+        else if (this.game.world.bld[t] >= 0) this.app.toast(`${LOTS[this.lot].label} built.`, 'good');
+        break;
+      }
       case 'junction': {
         const r = this.game.setJunction(t, JCODE[this.jmode]);
         if (!r.ok) { this.app.toast(r.msg ?? 'Cannot do that here.', 'warn'); this.app.sound.sfx('error'); }
@@ -402,7 +421,35 @@ export class Tools {
 
   // ------------------------------------------------------------------ selection
 
+  startSend(id: number) {
+    const p = this.game.city.personById.get(id);
+    if (!p) return;
+    this.sendFor = id;
+    this.app.toast(`Click a building to send ${p.first} there. Esc to cancel.`, 'info');
+    this.refreshPreview(true);
+  }
+
+  cancelSend() { if (this.sendFor !== null) { this.sendFor = null; this.refreshPreview(true); } }
+
+  private finishSend(e: PointerEvent) {
+    const pk = this.view.pick(e.clientX, e.clientY);
+    const g = this.game, w = g.world;
+    const p = this.sendFor !== null ? g.city.personById.get(this.sendFor) : undefined;
+    if (!p) { this.sendFor = null; return; }
+    const b = pk && pk.tile >= 0 && w.bld[pk.tile] >= 0 ? g.city.buildings.get(w.bld[pk.tile]) : undefined;
+    if (!b) { this.fail('Pick a building to send them to.'); return; }
+    const S = g.city.social;
+    const label = b === p.home ? `${p.first} is heading home` : b.kind === 'res' ? `${p.first} is visiting ${g.city.addressOf(b)}` : `${p.first} is going to ${b.name}`;
+    if (!S.order(p, { kind: b.kind === 'res' && b !== p.home ? 'visit' : 'go', dest: b, stay: S.stayFor(b, p), label }, true)) { this.fail(`${p.first} cannot get there. There is no road to it.`); return; }
+    this.sendFor = null;
+    this.app.toast(label, 'good');
+    this.app.sound.sfx('build');
+    this.refreshPreview(true);
+    this.app.panels.sync();
+  }
+
   private clickSelect(e: PointerEvent) {
+    if (this.sendFor !== null) { this.finishSend(e); return; }
     const pk = this.view.pick(e.clientX, e.clientY);
     if (!pk || pk.tile < 0) { this.setSelection(null); return; }
     const g = this.game, w = g.world, t = pk.tile;
@@ -439,6 +486,7 @@ export class Tools {
       case 'Digit8': this.select('service'); break;
       case 'Digit9': this.select('highway'); break;
       case 'Digit0': this.select('junction'); break;
+      case 'KeyV': this.select('lots'); break;
       case 'BracketRight': if (this.tool === 'transit') this.cycleMode(1); break;
       case 'BracketLeft': if (this.tool === 'transit') this.cycleMode(-1); break;
       case 'Space': e.preventDefault(); this.app.togglePause(); break;
@@ -456,7 +504,8 @@ export class Tools {
       case 'Enter': this.finishDraft(); break;
       case 'Backspace': e.preventDefault(); this.undoDraft(); break;
       case 'Escape':
-        if (this.draft) this.cancelDraft();
+        if (this.sendFor !== null) this.cancelSend();
+        else if (this.draft) this.cancelDraft();
         else if (this.tool !== 'inspect') this.select('inspect');
         else if (this.selection) this.setSelection(null);
         else if (this.app.panels.open) this.app.panels.close();
@@ -501,6 +550,16 @@ export class Tools {
     const dragging = !!this.drag;
     switch (this.tool) {
       case 'inspect': {
+        if (this.sendFor !== null) {
+          const p = g.city.personById.get(this.sendFor);
+          const b = hv >= 0 && w.bld[hv] >= 0 ? g.city.buildings.get(w.bld[hv]) : undefined;
+          if (p && b) {
+            const ok = b.access >= 0 || b === p.home;
+            cursors.push({ tile: hv, style: ok ? 'ok' : 'bad' });
+            this.tip = { text: b === p.home ? `Send ${p.first} home` : `Send ${p.first} to ${b.kind === 'res' ? g.city.addressOf(b) : b.name}`, sub: ok ? 'Click to go' : 'No road to it', bad: !ok };
+          } else if (p) this.tip = { text: `Where should ${p.first} go?`, sub: 'Click any building' };
+          break;
+        }
         const near = hv >= 0 && !this.pan && this.hover ? v.citizens.pick(this.hover.x, this.hover.z, this.pickRadius()) : null;
         if (near) {
           this.tip = { text: `${near.first} ${near.last}`, sub: g.city.activityOf(near, g.hour) };
@@ -518,6 +577,15 @@ export class Tools {
             const sp = g.traffic.cong[hv];
             this.tip = { text: roadLabel(w, hv), sub: sp > 0.8 ? 'Flowing' : sp > 0.45 ? 'Busy' : 'Jammed' };
           }
+        }
+        break;
+      }
+      case 'lots': {
+        if (hv >= 0) {
+          const def = LOTS[this.lot];
+          const why = g.lotCheck(this.lot, hv);
+          cursors.push({ tile: hv, style: why ? 'bad' : g.money >= def.cost ? 'ok' : 'bad' });
+          this.quote = { text: money(def.cost), ok: !why && g.money >= def.cost, reason: why ?? (g.money >= def.cost ? undefined : 'Not enough money') };
         }
         break;
       }

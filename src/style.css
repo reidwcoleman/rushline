@@ -439,3 +439,19 @@ input.rename:focus { border-bottom-color: var(--amber); }
 .ach .a i { width: 8px; height: 8px; border-radius: 4px; background: var(--glass-3); flex: none; }
 .ach .a.got { color: var(--text); background: var(--amber-soft); }
 .ach .a.got i { background: var(--amber); }
+/* Sims layer: wishes, moodlets, directing a citizen */
+.wish { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 6px 10px; border-radius: 10px; background: var(--amber-soft); color: #ffd48a; font-size: 12.5px; font-weight: 600; }
+.wish svg { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.chip.ml.up { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.chip.ml.down { background: color-mix(in srgb, var(--red) 16%, transparent); color: #ff9a92; }
+.chips.acts .chip.act { font-weight: 600; }
+.chips.acts .chip.act.off { opacity: 0.4; }
+.chips.acts .chip.act.send { background: var(--amber-soft); color: #ffd48a; }
+.chips.acts .chip.act svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.orders { display: grid; gap: 6px; margin-top: 8px; }
+.orders .ord { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.orders .ord i { width: 8px; height: 8px; border-radius: 4px; background: var(--glass-3); }
+.orders .ord i.going { background: var(--amber); }
+.orders .ord i.there { background: var(--green); }
+.orders .ord small { color: var(--text-3); font-size: 11.5px; font-weight: 500; }
+.orders .free { font-size: 12px; color: var(--text-3); }
