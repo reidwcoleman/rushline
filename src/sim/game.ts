@@ -26,7 +26,7 @@ export const SERVICE = {
 export type ServiceKind = keyof typeof SERVICE;
 
 export const MAX_LINES = 14;
-export const UNLOCK = { avenue: 200, junction: 150, highway: 800, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, airport: SERVICE.airport.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
+export const UNLOCK = { avenue: 200, junction: 150, highway: 400, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, airport: SERVICE.airport.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
 
 export interface Cmd { ok: boolean; msg?: string; cost?: number }
 
