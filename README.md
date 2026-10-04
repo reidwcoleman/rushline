@@ -1,23 +1,28 @@
 # Rushline
 
-A city-management game about keeping a growing city moving. The streets fill up faster than you can pave them: build roads and avenues, then run buses, trams, an elevated metro, ferries and cable cars, tune the city's policies, and keep three pressures (traffic, crowded stops, unhappy residents) from pushing the stability bar to zero.
+A city-management and transport-tycoon game. Real people with names, jobs, moods and families live in your city and all of them have to get somewhere. Build roads and avenues, move them by bus, tram, elevated metro, ferry and cable car, haul food, stone and goods by truck and freight rail, land planes at your own airport, and run it all as a company with books, loans, fares, vehicle wear and research. Keep three pressures (traffic, crowded stops, unhappy residents) from pushing the stability bar to zero.
 
-Everything you see is generated in code: terrain, water, buildings, vehicles, windows, sky, sound. No image, model or audio files.
+Everything you see is generated in code: terrain, water, buildings, vehicles, people, windows, sky, sound. No image, model or audio files.
 
 ## Play
 
 - Drag with the right mouse button to pan, scroll to zoom, `Q`/`E` to rotate, `R`/`F` to tilt.
-- Tools `1`-`7`: inspect, road, avenue, transit line, park, arena, bulldoze.
-- Transit (`4`, then pick a mode with the chips, press `4` again or `[` `]` to cycle):
+- Tools `1`-`8`: inspect, road, avenue, transit line, park, arena, bulldoze, services (schools, clinics, airport).
+- Transit (`4`, then People or Freight, then pick a vehicle with the chips, `4` again or `[` `]` to cycle):
   - **Bus** - cheap, uses the road, gets stuck in traffic.
-  - **Tram** - rails in the road median, never stuck in traffic. Streets on its route become avenues. Unlocks at 150 residents.
+  - **Tram** - rails in the road median, never stuck in traffic. Streets on its route become avenues. 150 residents.
   - **Ferry** - piers on the shoreline, boats sail the river and bay. 320 residents.
   - **Gondola** - cable cars fly straight over rivers and rooftops, up to 18 tiles a hop. 420 residents.
   - **Metro** - big elevated trains on their own track. 600 residents.
-- Click to place stops, then `Enter` (or Finish line). Auto-stops fills in stops along long hops. Metro lines can only cross at a shared station. People walk between nearby stops, so a bus can feed a metro.
-- The advisor (top right) offers one-click fixes: add a vehicle, widen a street, build a line for you. Auto-fleet buys vehicles for crowded lines. Both can be switched off in the pause menu. Relaxed difficulty is the default.
-- `G` traffic view, `T` transit view, `H` mood view, `L` lines, `P` policies, `Space` pause, `+`/`-` speed, `U` hide the interface.
-- Click the three small meters under "City stability" to jump to the worst problem.
+  - **Trucks** and **Freight rail** - haul cargo between farms, quarries, the factory, shops and the cargo terminal. 400 and 900 residents.
+- Click to place stops, then `Enter` (or Finish line). Auto-stops fills in stops along long hops. People walk between nearby stops, so a bus can feed a metro.
+- **Citizens**: click any little person or car to meet them. Each has a name, age, traits, a household, a job and career ladder, five needs (energy, hunger, fun, social, comfort), a mood, friends, and a thought. Follow them around the city. `C` opens the town directory: news, people sorted by mood, and what residents are asking for. Families move in, kids go to school, people get promoted, retire and are born.
+- **Freight**: farms make food, quarries dig stone, the factory turns stone into goods, shops sell food and goods, and the terminal exports everything. Cargo piles up at the industry until a truck or train takes it. Industries that get collected from grow. Shops that run dry buy imports, which costs money.
+- **Company** (`B`): books, a two-week cash chart, loans, maintenance level, profit per line, fleet condition with renewals, a research lab that gives each vehicle type four generations, and contracts that pay cash. Every line has a ticket price: cheaper fares fill vehicles, dearer ones earn more per rider.
+- Vehicles wear out. Worn ones break down and block the way, so keep them serviced or renew them.
+- **Airport** (Services, 2,200 residents): a three by two tile block with a runway, terminal and tower. Planes come in, park at a gate and take off again, and every flight pays.
+- The advisor (top right) offers one-click fixes: add a vehicle, widen a street, build a line, connect a farm. Auto-fleet buys vehicles for crowded lines. Both can be switched off in the pause menu. Relaxed difficulty is the default.
+- `G` traffic view, `T` transit view, `H` mood view, `C` citizens, `B` company, `L` lines, `P` policies, `Space` pause, `+`/`-` speed, `U` hide the interface.
 
 ## Run it
 
@@ -35,11 +40,14 @@ node --experimental-transform-types tools/smart.ts 5 30 1   # a scripted player;
 node --experimental-transform-types tools/fuzz.ts 11 14 gentle   # random commands with invariant checks
 node tools/shot.mjs --url "/?hold&demo=7&play=1" --out shots/a.png --eval "__cam(0,0,30,.7,.9); 1"
 node --experimental-transform-types tools/modetest.ts 8 2   # builds one of each new mode and checks riders
+node --experimental-transform-types tools/citizens.ts 3 3 5 # needs, moods, households and the town feed over a few days
+node --experimental-transform-types tools/freighttest.ts 3 3 # builds freight lines between the starting industries
+node --experimental-transform-types tools/roundtrip.ts 4    # save and restore of citizens, industries, airport and finance
 node tools/fps.mjs                                  # frame rate per quality level
 ```
 
 ## How it is built
 
-- `src/sim` is plain TypeScript with no rendering: map and terrain, car-following traffic with junction yielding, bus, tram, metro, ferry and cable car vehicles (one table in `modes.ts`), the multimodal trip planner with walking transfers, the advisor, people with daily schedules, growth and upgrades, economy, stability, events.
-- `src/render` is three.js: procedural buildings drawn as instanced meshes with a window shader, a rounded-junction road mesh, viaducts, tram rails, piers, cable car pylons and stations, water and sky shaders, image-based lighting from the live sky, a day/night cycle, depth AO and tilt-shift in the post chain.
+- `src/sim` is plain TypeScript with no rendering: map and terrain, car-following traffic with junction yielding, seven vehicle types (one table in `modes.ts`), the multimodal trip planner with walking transfers, the advisor, citizens (`people.ts`: names, traits, needs, careers, households, aging) and their daily schedules, industry and cargo (`industry.ts`), vehicle wear and breakdowns, company books, loans, research and contracts, growth and upgrades, economy, stability, events.
+- `src/render` is three.js (citizens, planes, trucks and trains included): procedural buildings drawn as instanced meshes with a window shader, a rounded-junction road mesh, viaducts, tram rails, piers, cable car pylons and stations, water and sky shaders, image-based lighting from the live sky, a day/night cycle, depth AO and tilt-shift in the post chain.
 - `src/ui` is the HUD, tools and panels, written with plain DOM.

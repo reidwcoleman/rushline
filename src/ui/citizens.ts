@@ -131,6 +131,7 @@ export function directoryPanel(P: Panels): Built {
     const mood = P.meter(s.mood, moodColorHex(s.mood));
     summary.append(
       h('div', { class: 'row' }, h('span', { class: 'k' }, 'Average mood'), h('span', { class: 'v' }, moodWord(s.mood))), mood.el,
+      h('div', { class: 'row' }, h('span', { class: 'k' }, 'Air quality'), h('span', { class: 'v', style: { color: s.smog > 0.55 ? 'var(--red)' : s.smog > 0.3 ? 'var(--amber)' : 'var(--green)' } }, s.smog > 0.55 ? 'Smoggy' : s.smog > 0.3 ? 'Hazy' : 'Clean')),
       h('div', { class: 'tri' },
         h('div', {}, h('b', { class: 'num' }, String(s.adults)), h('span', {}, 'Adults')),
         h('div', {}, h('b', { class: 'num' }, String(s.kids)), h('span', {}, 'Young')),

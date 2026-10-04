@@ -508,7 +508,13 @@ export class Tools {
         break;
       }
       case 'service': {
-        if (hv >= 0) {
+        if (hv >= 0 && this.service === 'airport') {
+          const def = SERVICE.airport;
+          const pl = g.planAirport(hv);
+          const tiles = pl.ok ? pl.foot : [hv];
+          for (const t of tiles) cursors.push({ tile: t, style: pl.ok ? 'ok' : 'bad' });
+          this.quote = { text: money(def.cost), ok: pl.ok && g.money >= def.cost, reason: pl.ok ? (g.money >= def.cost ? undefined : 'Not enough money') : pl.reason };
+        } else if (hv >= 0) {
           const def = SERVICE[this.service];
           const rf = g.city.roadFor({ x: tileX(hv), y: tileY(hv) });
           const ok = w.isUnlocked(hv) && !w.water[hv] && w.isEmpty(hv) && !w.rail[hv] && rf.tile >= 0;

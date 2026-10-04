@@ -37,6 +37,7 @@ const VENUE_PATTERNS: Record<Venue, string[]> = {
   arena: ['{N} Arena'],
   school: ['{N} School', '{N} Academy'],
   clinic: ['{N} Clinic', '{N} Medical Centre'],
+  airport: ['{N} Regional Airport', '{N} Airfield', '{N} Skyport'],
 };
 const IND_PATTERNS = ['{N} Works', '{N} Foundry', '{N} Manufacturing', '{N} Industrial', '{N} Fabrication', '{N} Mill', '{N} Machine Co.'];
 export function venueName(r: Rng, v: Venue | 'ind'): string {
@@ -71,6 +72,7 @@ export const VENUES: Record<Venue, VenueDef> = {
   arena:  { label: 'Arena',   fun: 1.00, hunger: 0.15, social: 0.75, price: 3.2, wage: 15, jobs: ['Steward', 'Groundskeeper', 'Event producer'], stock: null },
   school: { label: 'School',  fun: 0.00, hunger: 0.00, social: 0.00, price: 0.0, wage: 16, jobs: ['Teaching assistant', 'Teacher', 'Principal'], stock: null },
   clinic: { label: 'Clinic',  fun: 0.00, hunger: 0.00, social: 0.00, price: 0.0, wage: 20, jobs: ['Nurse', 'Doctor', 'Chief of medicine'], stock: null },
+  airport: { label: 'Airport', fun: 0.6, hunger: 0.18, social: 0.5, price: 6.0, wage: 20, jobs: ['Baggage handler', 'Air traffic controller', 'Airport director'], stock: null },
 };
 /** jobs at the freight industries */
 export const FAC_JOBS: Record<string, { label: string; wage: number; titles: [string, string, string] }> = {

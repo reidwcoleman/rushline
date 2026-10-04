@@ -6,8 +6,8 @@ import type { Mode } from './modes.ts';
 export type Kind = 'res' | 'com' | 'ind';
 
 /** what a shop-type building actually is; decides what a visit does for a citizen */
-export type Venue = 'shop' | 'cafe' | 'diner' | 'cinema' | 'bar' | 'gym' | 'office' | 'mall' | 'arena' | 'school' | 'clinic';
-export type Special = 'arena' | 'school' | 'clinic' | 'farm' | 'quarry' | 'factory' | 'terminal';
+export type Venue = 'shop' | 'cafe' | 'diner' | 'cinema' | 'bar' | 'gym' | 'office' | 'mall' | 'arena' | 'school' | 'clinic' | 'airport';
+export type Special = 'arena' | 'school' | 'clinic' | 'airport' | 'farm' | 'quarry' | 'factory' | 'terminal';
 export type Cargo = 'food' | 'stone' | 'goods';
 export const CARGOS: Cargo[] = ['food', 'stone', 'goods'];
 export const cargoIdx = (c: Cargo) => CARGOS.indexOf(c);
@@ -49,6 +49,8 @@ export interface Building {
   stock: number[];        // cargo on hand [food, stone, goods]
   eff: number;            // production multiplier that follows how well it is served
   made: number; picked: number;   // today's output and how much was hauled
+  foot: number[];         // every tile a large building covers (airport), empty for single-tile buildings
+  rotFoot: number;        // orientation used to lay out the footprint
 }
 
 export type PState = 'home' | 'toWork' | 'work' | 'toHome' | 'toLeisure' | 'leisure' | 'toBack';

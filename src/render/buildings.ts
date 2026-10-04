@@ -710,6 +710,84 @@ function terminal(r: () => number): Variant {
   return { geo, height: 0.4, smoke: [] };
 }
 
+
+// ------------------------------------------------------------------------------ airport (3 x 2 tiles)
+
+/** a small jet facing +x, built from boxes: used for parked planes on the apron and for the flying ones */
+export function addPlane(b: MeshBuilder, x: number, y: number, z: number, scale: number, paint: boolean) {
+  const s = scale;
+  const body = lin(0xf3f4f6), glass = lin(0x2c3a4a), engine = lin(0xaeb4bb);
+  const sp = b.paintW;
+  b.paintW = 0;
+  b.box(x, y, z, 0.56 * s, 0.075 * s, 0.075 * s, body);                        // fuselage
+  b.cone(x + 0.3 * s, y + 0.0375 * s - 0.0375 * s, z, 0.0375 * s, 0.1 * s, body, 8);   // nose placeholder (tilted below)
+  b.box(x + 0.2 * s, y + 0.045 * s, z, 0.1 * s, 0.03 * s, 0.07 * s, glass);    // cockpit glazing
+  b.box(x - 0.02 * s, y + 0.012 * s, z, 0.14 * s, 0.03 * s, 0.62 * s, body);    // wings
+  b.box(x - 0.1 * s, y + 0.012 * s, z, 0.04 * s, 0.014 * s, 0.6 * s, lin(0xd5d9de));
+  for (const sz of [-1, 1]) b.cyl(x + 0.05 * s, y - 0.01 * s, z + sz * 0.15 * s, 0.022 * s, 0.022 * s, 0.07 * s, engine, 8);
+  b.box(x - 0.27 * s, y + 0.06 * s, z, 0.1 * s, 0.1 * s, 0.012 * s, body);     // fin
+  b.box(x - 0.27 * s, y + 0.02 * s, z, 0.06 * s, 0.012 * s, 0.24 * s, body);   // tailplane
+  b.paintW = paint ? 1 : 0;
+  b.box(x - 0.275 * s, y + 0.1 * s, z, 0.08 * s, 0.06 * s, 0.014 * s, paint ? lin(0xffffff) : lin(0xd4553e));   // livery on the fin
+  b.box(x + 0.0, y + 0.04 * s, z, 0.4 * s, 0.014 * s, 0.077 * s, paint ? lin(0xffffff) : lin(0xd4553e));        // cheat line
+  b.paintW = sp;
+}
+
+function airport(r: () => number): Variant {
+  const b = new MeshBuilder();
+  b.paintW = 0;
+  const ASPH = lin(0x4a4f57), CONC = lin(0xc4c1b8), WHITE_L = lin(0xf4f4ef);
+  b.floor(0, 0.016, 0, 2.96, 1.96, lin(0x86b266));
+  // runway with edge lines, centre dashes and threshold stripes
+  b.floor(0, 0.0175, -0.55, 2.9, 0.44, ASPH);
+  b.floor(0, 0.0185, -0.55 - 0.2, 2.86, 0.01, WHITE_L); b.floor(0, 0.0185, -0.55 + 0.2, 2.86, 0.01, WHITE_L);
+  for (let i = -6; i <= 6; i++) b.floor(i * 0.22, 0.0185, -0.55, 0.12, 0.014, WHITE_L);
+  for (const sx of [-1, 1]) for (let k = -3; k <= 3; k++) b.floor(sx * 1.32, 0.0185, -0.55 + k * 0.05, 0.1, 0.02, WHITE_L);
+  // edge lights glow after dark
+  for (let i = -7; i <= 7; i++) for (const sz of [-1, 1]) b.box(i * 0.2, 0.0185, -0.55 + sz * 0.235, 0.018, 0.012, 0.018, lin(0xfff0c8), { emit: 3.5 });
+  // taxiways and the apron
+  b.floor(-0.55, 0.0175, -0.12, 0.13, 0.62, ASPH);
+  b.floor(1.15, 0.0175, -0.12, 0.13, 0.62, ASPH);
+  b.floor(0.3, 0.0175, 0.12, 1.9, 0.18, ASPH);
+  b.floor(0.0, 0.0176, 0.4, 2.2, 0.36, CONC);
+  for (const gx of [-0.55, 0.0, 0.55]) b.floor(gx, 0.0186, 0.4, 0.012, 0.3, lin(0xf2c14e));
+  // terminal with a glass front and canopy
+  b.paintW = 1;
+  b.box(-0.1, 0.016, 0.78, 1.7, 0.14, 0.3, lin(0xe9edf1), { win: W(0.12, 0.14, 0.7, 0.56), top: ROOF_FLAT });
+  b.paintW = 0;
+  b.box(-0.1, 0.156, 0.78, 1.74, 0.02, 0.34, lin(0x5a6470));
+  b.box(-0.1, 0.05, 0.62, 1.5, 0.07, 0.03, lin(0x7fb4cf), { emit: 0.6 });
+  b.box(-0.1, 0.12, 0.6, 1.62, 0.014, 0.1, lin(0xf2f4f6));
+  // jet bridges
+  for (const gx of [-0.55, 0.0, 0.55]) { b.box(gx, 0.08, 0.57, 0.05, 0.05, 0.22, lin(0xdcdfe3)); b.box(gx, 0.016, 0.67, 0.012, 0.064, 0.012, lin(0x8a929c)); }
+  // control tower
+  b.cyl(1.05, 0.016, 0.8, 0.055, 0.045, 0.6, lin(0xe6e2d8), 10, { cap: false });
+  b.cyl(1.05, 0.616, 0.8, 0.1, 0.12, 0.09, lin(0x7fb4cf), 10, { cap: false, win: undefined });
+  b.cyl(1.05, 0.706, 0.8, 0.125, 0.04, 0.02, lin(0x4a515c), 10);
+  b.box(1.05, 0.726, 0.8, 0.012, 0.1, 0.012, lin(0xcfd4da));
+  b.box(1.05, 0.826, 0.8, 0.02, 0.02, 0.02, lin(0xff4a3d), { emit: 4 });
+  // hangar with a barrel roof
+  b.box(-1.2, 0.016, 0.76, 0.5, 0.14, 0.34, lin(0xd8d4c8));
+  b.gable(-1.2, 0.156, 0.76, 0.5, 0.34, 0.07, lin(0xa8aeb6), lin(0x90969e), 0.01, true);
+  b.box(-1.2, 0.016, 0.935, 0.34, 0.1, 0.008, lin(0x4a5568));
+  // parked planes on two of the gates
+  addPlane(b, 0.98, 0.05, 0.36, 0.9, false);
+  b.paintW = 0;
+  // fuel tanks, a windsock and ground vehicles
+  for (const [tx, tz] of [[1.35, 0.55], [1.35, 0.35]] as const) b.cyl(tx, 0.016, tz, 0.07, 0.07, 0.1, lin(0xdfe3e8), 12, { capColor: lin(0xb8bfc6) });
+  b.cyl(-1.35, 0.016, -0.2, 0.006, 0.006, 0.14, lin(0xcfd4da), 5, { cap: false });
+  b.box(-1.31, 0.12, -0.2, 0.07, 0.03, 0.02, lin(0xff7a3d));
+  b.box(0.25, 0.02, 0.2, 0.08, 0.04, 0.045, lin(0xf2b84b)); b.box(-0.35, 0.02, 0.22, 0.07, 0.035, 0.04, lin(0xf2f2ee));
+  // car park in front
+  b.floor(0.9, 0.0176, 0.95, 1.0, 0.05, ASPH);
+  for (let i = 0; i < 7; i++) b.box(0.55 + i * 0.12, 0.02, 0.95, 0.07, 0.035, 0.035, lin(BOXES[(i * 5) % BOXES.length]));
+  for (let i = 0; i < 9; i++) tree(b, -1.4 + i * 0.35, 0.96, 0.8 + (i % 3) * 0.15, r);
+  tree(b, 1.45, -0.95, 1, r); tree(b, -1.45, -0.95, 1, r);
+  b.paintW = 1;
+  const geo = b.geometry();
+  return { geo, height: 0.85, smoke: [] };
+}
+
 // ------------------------------------------------------------------------------ catalogue
 
 const MAKERS: Record<Kind, ((r: () => number, v: number) => Variant)[]> = {
@@ -726,11 +804,20 @@ export function buildVariant(kind: Kind, level: number, variant: number, special
   if (special === 'quarry') return quarry(mulberry32(19));
   if (special === 'factory') return freightFactory(mulberry32(23));
   if (special === 'terminal') return terminal(mulberry32(29));
+  if (special === 'airport') return airport(mulberry32(31));
   const r = mulberry32(kind.charCodeAt(0) * 1000 + level * 100 + variant * 7 + 3);
   return MAKERS[kind][level - 1](r, variant);
 }
 
 export const faceAngle = (rot: number) => [Math.PI / 2, 0, -Math.PI / 2, Math.PI][rot & 3];
+
+/** world centre of a building; large ones cover several tiles */
+export function footCenter(b: Building): { x: number; z: number } {
+  if (!b.foot.length) return { x: wx(b.x), z: wz(b.y) };
+  let sx = 0, sz = 0;
+  for (const t of b.foot) { sx += wx(t % 40); sz += wz(Math.floor(t / 40)); }
+  return { x: sx / b.foot.length, z: sz / b.foot.length };
+}
 
 interface Pool {
   mesh: THREE.InstancedMesh;
@@ -779,7 +866,8 @@ export class BuildingsView {
 
   private setMatrix(p: Pool, slot: number, b: Building, sy: number, extra = 0) {
     const sxz = 1 + (1 - Math.min(1, sy)) * 0.06 + extra;
-    tmpObj.position.set(wx(b.x), 0, wz(b.y));
+    const c = footCenter(b);
+    tmpObj.position.set(c.x, 0, c.z);
     tmpObj.rotation.set(0, faceAngle(b.rot), 0);
     tmpObj.scale.set(sxz, Math.max(0.001, sy), sxz);
     tmpObj.updateMatrix();

@@ -419,3 +419,15 @@ button.chip:hover { background: var(--glass-3); }
 /* short screens: shrink the toolbar so every tool stays on screen */
 @media (max-height: 860px) and (min-width: 761px) { .toolbar { padding: 6px; gap: 2px; } .tool { width: 40px; height: 40px; border-radius: 11px; } .tool svg { width: 21px; height: 21px; } }
 @media (max-height: 720px) and (min-width: 761px) { .toolbar { padding: 5px; gap: 1px; top: 56%; } .tool { width: 34px; height: 34px; border-radius: 10px; } .tool svg { width: 19px; height: 19px; } .sep { margin: 2px 6px; } }
+
+/* emotes over citizens */
+.emote { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; background: rgba(12, 18, 26, 0.88); border: 1px solid color-mix(in srgb, var(--c, #fff) 55%, transparent); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); animation: emote 0.35s var(--spring); }
+.emote svg { width: 14px; height: 14px; stroke: var(--c, #fff); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes emote { from { transform: scale(0.3); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.job { display: grid; gap: 7px; padding: 10px 12px; border-radius: 12px; background: var(--glass-2); }
+.job.active { background: var(--amber-soft); }
+.job b { font-size: 13.5px; } .job small { color: var(--text-2); font-size: 12px; line-height: 1.35; }
+.tabs .tab { white-space: nowrap; }
+@media (max-width: 760px) { .side.wide { width: auto; } }
+@media (max-width: 760px) { .city .rush { display: none; } }

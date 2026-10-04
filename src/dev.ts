@@ -120,3 +120,15 @@ export function addFreight(g: Game) {
   mk('rail', 'freight', [quarry, term], 2);
   return out;
 }
+
+/** put an airport on the best free spot (for screenshots and tests) */
+export function addAirport(g: Game) {
+  g.money = Math.max(g.money, 200000);
+  g.unlocked.airport = true;
+  for (const d of g.world.districts) if (!d.unlocked) g.unlockDistrict(d.index);
+  for (let i = 0; i < 1600; i++) {
+    const pl = g.planAirport(i);
+    if (pl.ok) { const r = g.placeService('airport', i); if (r.ok) return { at: i, rot: pl.rot }; }
+  }
+  return { at: -1, rot: -1 };
+}

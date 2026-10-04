@@ -43,12 +43,13 @@ export interface Stats {
   stuck: number;
   adults: number; kids: number; seniors: number; pupils: number;
   mood: number;           // average mood of all citizens
+  smog: number;           // 0 clean .. 1 choking
   schools: number; clinics: number;
 }
 
 export interface FeedItem { id: number; t: number; pid: number; text: string; tone: 'good' | 'info' | 'warn' | 'bad' }
 export const SCHOOL_CAP = 70;
-export const STAFF_CAP = { arena: 24, school: 14, clinic: 12, farm: FACILITY.farm.jobs, quarry: FACILITY.quarry.jobs, factory: FACILITY.factory.jobs, terminal: FACILITY.terminal.jobs };
+export const STAFF_CAP = { arena: 24, school: 14, clinic: 12, airport: 30, farm: FACILITY.farm.jobs, quarry: FACILITY.quarry.jobs, factory: FACILITY.factory.jobs, terminal: FACILITY.terminal.jobs };
 
 export class City {
   buildings = new Map<number, Building>();
@@ -58,7 +59,7 @@ export class City {
   stats: Stats = {
     pop: 0, employed: 0, unemployed: 0, jobs: 0, housing: 0, sat: 0.8, commute: 0, car: 0, transit: 0, walk: 0, trips: 0,
     demand: { r: 0.5, c: 0.4, i: 0.3 }, buildings: 0, levels: [0, 0, 0], stuck: 0,
-    adults: 0, kids: 0, seniors: 0, pupils: 0, mood: 0.7, schools: 0, clinics: 0,
+    adults: 0, kids: 0, seniors: 0, pupils: 0, mood: 0.7, smog: 0, schools: 0, clinics: 0,
   };
   households = new Map<number, Household>();
   personById = new Map<number, Person>();
@@ -96,6 +97,8 @@ export class City {
   private tick = 0;
   private jobQueue: Building[] = [];
   carFees = 0;
+  /** research generation of a mode (cleaner vehicles), set by the game */
+  cleanLevel: (mode: import('./modes.ts').Mode) => number = () => 0;
 
   constructor(private ctx: Ctx, readonly traffic: Traffic, readonly transit: Transit) {
     traffic.onArrive = (v) => { if (v.person) this.arrive(v.person, v); };
@@ -120,7 +123,7 @@ export class City {
     return { tile: best, dir: bd, all };
   }
 
-  addBuilding(x: number, y: number, kind: Kind, level = 1, special?: Special): Building {
+  addBuilding(x: number, y: number, kind: Kind, level = 1, special?: Special, foot: number[] = [], rotFoot = 0): Building {
     const w = this.w;
     const tile = tileIdx(x, y);
     const rf = this.roadFor({ x, y });
@@ -134,10 +137,13 @@ export class City {
       access: rf.tile, accessAll: rf.all, land: 0.3, happy: 0.8, lastLevel: this.ctx.t, cutoff: 0, glow: 0, special,
       venue, name: kind === 'res' ? '' : fac ? facilityName(rand, special as keyof typeof NAME_PATTERNS) : venueName(rand, venue ?? 'ind'), guests: [], students: [], park: 0, clinic: 0,
       out: [0, 0, 0], stock: kind === 'com' && venue && sellsIdx({ kind, venue } as Building) >= 0 ? [8, 0, 8] : [0, 0, 0], eff: 1, made: 0, picked: 0,
+      foot, rotFoot,
     };
+    if (foot.length) { const acc = this.roadForFoot(foot); b.access = acc.tile; b.accessAll = acc.all; b.rot = rotFoot; }
     if (special) { b.cap = STAFF_CAP[special]; b.variant = 0; }
     this.buildings.set(b.id, b);
     w.bld[tile] = b.id;
+    for (const t of foot) { w.bld[t] = b.id; if (w.tree[t]) w.tree[t] = 0; }
     if (w.tree[tile]) { w.tree[tile] = 0; this.ctx.emit('treesChanged'); }
     this.candDirty = true;
     this.sitesDirty = true;
@@ -148,6 +154,7 @@ export class City {
   removeBuilding(b: Building, reason = 'bulldozed') {
     this.buildings.delete(b.id);
     this.w.bld[b.tile] = -1;
+    for (const t of b.foot) this.w.bld[t] = -1;
     // residents leave, workers lose their jobs
     for (const p of [...b.residents]) this.removePerson(p);
     const lost = [...b.workers, ...b.students];
@@ -180,8 +187,22 @@ export class City {
     this.ctx.emit('bldLevel', b);
   }
 
+  /** roads touching any tile of a large building */
+  roadForFoot(foot: number[]): { tile: number; all: number[] } {
+    const w = this.w, set = new Set(foot);
+    const all: number[] = [];
+    for (const t of foot) for (let d = 0; d < 4; d++) {
+      const nx = tileX(t) + DX[d], ny = tileY(t) + DY[d];
+      if (!inMap(nx, ny)) continue;
+      const n = tileIdx(nx, ny);
+      if (!set.has(n) && w.road[n] && !all.includes(n)) all.push(n);
+    }
+    return { tile: all.length ? all[0] : -1, all };
+  }
+
   refreshAccess() {
     for (const b of this.buildings.values()) {
+      if (b.foot.length) { const acc = this.roadForFoot(b.foot); b.access = acc.tile; b.accessAll = acc.all; continue; }
       const rf = this.roadFor(b);
       b.access = rf.tile;
       b.accessAll = rf.all;
@@ -596,6 +617,7 @@ export class City {
       const v = VENUES[b.venue ?? 'shop'];
       let gain = v.fun * wFun + v.hunger * wEat + v.social * wSoc;
       if (has(p, 'sporty') && b.venue === 'gym') gain *= 2;
+      if (b.special === 'airport') gain *= 1.5;
       if (b.guests.length && p.friends.length) { for (const g of b.guests) if (p.friends.includes(g.id)) { gain *= 1.5; break; } }
       const d = Math.hypot(b.x - p.home.x, b.y - p.home.y);
       const s = (this.ctx.rand() + 0.2) * (0.42 + gain) * (1 + b.level * 0.3) / Math.pow(d + 4, 1.4);
@@ -781,7 +803,7 @@ export class City {
       n.social += sc * hrs;
       // comfort drifts toward how their home, commute and finances feel
       const school = p.stage === 'child' || p.stage === 'teen' ? 0 : 0;
-      const target = 0.38 + 0.42 * p.home.land + 0.2 * p.sat - (p.wallet < 0 ? 0.15 : 0) + 0.06 * p.home.clinic * (p.stage === 'senior' ? 2 : 1) + school;
+      const target = 0.4 + 0.42 * p.home.land + 0.2 * p.sat - 0.16 * this.stats.smog - (p.wallet < 0 ? 0.15 : 0) + 0.06 * p.home.clinic * (p.stage === 'senior' ? 2 : 1) + school;
       n.comfort += (clamp(target) - n.comfort) * Math.min(1, 0.15 * hrs);
       n.energy = clamp(n.energy); n.hunger = clamp(n.hunger); n.fun = clamp(n.fun); n.social = clamp(n.social); n.comfort = clamp(n.comfort);
       p.mood = moodOf(p);
@@ -896,7 +918,7 @@ export class City {
       case 'walkOut': case 'walk': return `Walking ${to === 'home' ? 'home' : 'to ' + to}`;
     }
     if (p.state === 'work') return p.student ? `At ${p.work?.name ?? 'school'}` : p.at === p.work ? `Working at ${p.work?.name ?? 'work'}` : 'Between places';
-    if (p.state === 'leisure') { const b = p.at; const v = b?.venue; return b ? `${v === 'cafe' ? 'Having a coffee' : v === 'diner' ? 'Eating out' : v === 'cinema' ? 'Watching a film' : v === 'bar' ? 'Out for a drink' : v === 'gym' ? 'Working out' : b.special === 'arena' ? 'At the match' : b.special === 'clinic' ? 'At the clinic' : 'Shopping'} at ${b.name}` : 'Out'; }
+    if (p.state === 'leisure') { const b = p.at; const v = b?.venue; return b ? `${v === 'cafe' ? 'Having a coffee' : v === 'diner' ? 'Eating out' : v === 'cinema' ? 'Watching a film' : v === 'bar' ? 'Out for a drink' : v === 'gym' ? 'Working out' : b.special === 'arena' ? 'At the match' : b.special === 'clinic' ? 'At the clinic' : b.special === 'airport' ? 'Watching the planes' : 'Shopping'} at ${b.name}` : 'Out'; }
     if (this.sleepWindow(p, hour)) return 'Sleeping';
     if (p.remote) return 'Working from home';
     if ((hour >= 6.4 && hour < 8.6) && hour < p.workStart + 1.2) return 'Having breakfast';
@@ -1055,6 +1077,20 @@ export class City {
     const dc = clamp(1 - comJ / (pop * 0.3 + 6)) * 0.85 + (jobRatio < 1 ? 0.2 : 0);
     const di = clamp(1 - indJ / (pop * 0.22 + 6)) * 0.8 * (jobRatio < 1.6 ? 1 : 0.4);
     s.demand = { r: dr, c: clamp(dc), i: di };
+    // air: exhaust from traffic and industry, soaked up by parks
+    {
+      let emit = 0;
+      for (const v of this.traffic.vehicles) {
+        if (v.kind === 0) emit += 0.65;
+        else { const k = v.carrier?.line.kind ?? 'bus'; emit += (k === 'truck' ? 2.2 : 1.1) * (1 - 0.16 * this.cleanLevel(k)); }
+      }
+      for (const b of this.buildings.values()) if (b.kind === 'ind') emit += b.special === 'factory' ? 3.5 : b.special ? 1.5 : 1.8;
+      let parks = 0;
+      const wd = this.w;
+      for (let i = 0; i < N * N; i++) if (wd.park[i]) parks++;
+      const tgt = clamp((emit - parks * 0.9) / (45 + pop / 18)) * 0.95;
+      s.smog += (tgt - s.smog) * 0.12;
+    }
     // what residents are asking for: a rolling sample
     if (pop > 8) {
       const cnt: Record<string, number> = {};

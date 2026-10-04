@@ -10,7 +10,7 @@ const gentle = process.argv[4] === 'gentle';
 const g = new Game(seed);
 const w = g.world;
 g.money = 1e7;
-for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight'] as const) g.unlocked[k] = true;
+for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight', 'school', 'clinic', 'airport'] as const) g.unlocked[k] = true;
 const R = () => g.rand();
 let ops = 0;
 function randTile() { return Math.floor(R() * N * N); }
@@ -46,6 +46,7 @@ function act() {
   else if (r < 0.41) g.bulldoze(randRoad() >= 0 ? randRoad() : 0);
   else if (r < 0.48) { for (const d of w.districts) if (!d.unlocked) { g.unlockDistrict(d.index); break; } }
   else if (r < 0.58) { const a = randRoad(), b = randRoad(), c = randRoad(); if (a >= 0 && b >= 0 && c >= 0) g.createBusLine([a, b, c].filter((v, i, arr) => arr.indexOf(v) === i)); }
+  else if (r < 0.31 && R() < 0.25) { g.placeService((['school', 'clinic', 'airport'] as const)[(R() * 3) | 0], randTile()); }
   else if (r < 0.64) { const m = FUZZ_MODES[(R() * FUZZ_MODES.length) | 0]; const a = randSpot(m), b = randSpot(m); if (a >= 0 && b >= 0) { const ts = R() < 0.4 ? [a, b, randSpot(m)].filter((v, i, arr) => v >= 0 && arr.indexOf(v) === i) : [a, b]; g.createLine(m, ts); } }
   else if (r < 0.70) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.addVehicle(l); }
   else if (r < 0.74) { const l = g.transit.lines[(R() * g.transit.lines.length) | 0]; if (l) g.removeVehicle(l); }
@@ -63,7 +64,7 @@ function check() {
     if (v.i < 0 || v.i >= v.path.length) throw new Error('bad path index');
     if (!w.road[v.path[v.i]] && !v.dead) throw new Error(`vehicle ${v.id} on a non-road tile ${v.path[v.i]}`);
   }
-  for (const [id, b] of g.city.buildings) if (w.bld[b.tile] !== id) throw new Error('building map mismatch');
+  for (const [id, b] of g.city.buildings) { if (w.bld[b.tile] !== id) throw new Error('building map mismatch'); for (const t of b.foot) if (w.bld[t] !== id) throw new Error('footprint mismatch'); }
   for (const p of g.city.persons) if (!p.home || p.home.residents.indexOf(p) < 0) throw new Error('person not in home');
   for (const s of g.transit.stops) if (w.stop[s.tile] !== s.id) throw new Error('stop map mismatch');
   for (const l of g.transit.lines) for (const s of l.stops) if (!g.transit.stopById.has(s.id)) throw new Error('line has dead stop');

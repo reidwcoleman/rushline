@@ -15,15 +15,16 @@ export const COST = {
   arena: 6000, street: 12, avenue: 38, upgrade: 28, bridge: 60, park: 140, busStop: 80, bus: 200, station: 1000, track: 70, trackWater: 60, train: 900,
   bulldoze: 25, expandBus: 220, expandStation: 600,
 };
-export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4, school: 22, clinic: 30 };
+export const UPKEEP = { street: 0.7, avenue: 1.8, park: 4, school: 22, clinic: 30, airport: 150 };
 export const SERVICE = {
   school: { cost: 3800, unlock: 260, label: 'School', tag: 'Pupils walk or ride in every morning. Families want one close.' },
   clinic: { cost: 4800, unlock: 520, label: 'Clinic', tag: 'Keeps seniors healthy and comfortable. Check-ups send people across town.' },
+  airport: { cost: 15000, unlock: 2200, label: 'Airport', tag: 'A runway and terminal on three tiles. Planes land all day; it pays for every flight and draws crowds.' },
 } as const;
 export type ServiceKind = keyof typeof SERVICE;
 
 export const MAX_LINES = 14;
-export const UNLOCK = { avenue: 200, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
+export const UNLOCK = { avenue: 200, policies: 350, metro: MODES.metro.unlock, tram: MODES.tram.unlock, ferry: MODES.ferry.unlock, gondola: MODES.gondola.unlock, arena: 1600, school: SERVICE.school.unlock, clinic: SERVICE.clinic.unlock, airport: SERVICE.airport.unlock, truck: MODES.truck.unlock, freight: MODES.freight.unlock };
 
 export interface Cmd { ok: boolean; msg?: string; cost?: number }
 
@@ -33,6 +34,15 @@ export const RESEARCH_DAYS = [1.6, 2.6, 4];
 export const MODE_RESEARCH_MUL: Record<Mode, number> = { bus: 1, tram: 1.3, metro: 1.8, ferry: 1.2, gondola: 1.1, truck: 1.1, freight: 1.7 };
 export const FARE_STEPS = [0, 0.5, 1, 1.5, 2.2];
 export const researchCost = (mode: Mode, lvl: number) => Math.round(RESEARCH_COST[lvl] * MODE_RESEARCH_MUL[mode]);
+export interface Contract {
+  id: number; kind: 'haul' | 'ride' | 'export';
+  title: string; desc: string;
+  target: number; progress: number; reward: number;
+  cargo?: number; mode?: Mode;
+  state: 'offer' | 'active' | 'done' | 'failed';
+  until: number;          // offers vanish, active contracts expire
+  last: number;           // for deltas
+}
 export const loanLimit = (bestPop: number) => Math.min(90000, Math.round((3000 + bestPop * 9) / 500) * 500);
 
 export interface Goal { pop: number; reward: number; title: string }
@@ -77,6 +87,13 @@ export class Game {
   research: Record<Mode, number> = { bus: 0, tram: 0, metro: 0, ferry: 0, gondola: 0, truck: 0, freight: 0 };
   project: { mode: Mode; lvl: number; done: number; start: number } | null = null;
   breakdowns = 0;
+  flightAt = new Map<number, number>();
+  flights = 0;
+  contracts: Contract[] = [];
+  contractsDone = 0;
+  private nextContract = 1;
+  delivered = [0, 0, 0];
+  exported = 0;
   private lastBreak = -999;
   lastIncome = 0;
   lastExpense = 0;
@@ -105,7 +122,7 @@ export class Game {
   private stabT = 0;
   lastDay = 1;
   daysSurvived = 0;
-  unlocked = { avenue: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false, school: false, clinic: false, truck: false, freight: false };
+  unlocked = { avenue: false, policies: false, metro: false, tram: false, ferry: false, gondola: false, arena: false, school: false, clinic: false, airport: false, truck: false, freight: false };
   match: { tile: number; start: number; end: number; announced: boolean; started: boolean } | null = null;
   nextMatchDay = 0;
 
@@ -142,9 +159,10 @@ export class Game {
       spend: (a, why) => this.spend(a, why),
       breakdown: (c, x, z) => this.onBreakdown(c, x, z),
       sites: (x, z) => this.city.sitesNear(x, z),
-      cargoPay: (a) => this.earn(a, 'cargo'),
+      cargoPay: (a, _l, idx, q, term) => { this.earn(a, 'cargo'); this.delivered[idx] += q; if (term) this.exported += q; },
     };
     this.city.onFee = (a, why) => this.earn(a, why);
+    this.city.cleanLevel = (m) => this.research[m] ?? 0;
     this.money = [14000, 9500, 6500][this.diff];
     this.city.growthBoost = [0.72, 0.92, 1.25][this.diff];
     this.t = DAY * 0.27;     // early morning of day 1
@@ -290,6 +308,7 @@ export class Game {
   private closeBooks() {
     // the day's interest, lines settle their day, then a fresh page
     if (this.loan > 0) this.spend(Math.round(this.loan * 0.007), 'interest');
+    this.offerContracts();
     const imp = this.city.takeImports();
     if (imp > 0.5) this.spend(imp * 0.55, 'imports');
     for (const l of this.transit.lines) {
@@ -395,6 +414,91 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------- contracts
+
+  private contractSource(c: Contract): number {
+    if (c.kind === 'haul') return this.delivered[c.cargo!];
+    if (c.kind === 'export') return this.exported;
+    let n = 0;
+    for (const l of this.transit.lines) if (l.kind === c.mode) n += l.boardings;
+    return n + this.retiredBoard[c.mode!];
+  }
+  retiredBoard: Record<Mode, number> = { bus: 0, tram: 0, metro: 0, ferry: 0, gondola: 0, truck: 0, freight: 0 };
+
+  private offerContracts() {
+    const t = this.t, r = this.rand;
+    this.contracts = this.contracts.filter((c) => !(c.state === 'offer' && t > c.until) && !((c.state === 'done' || c.state === 'failed') && t > c.until));
+    const offers = this.contracts.filter((c) => c.state === 'offer').length;
+    if (offers >= 3 || this.bestPop < 250) return;
+    const kinds: Contract['kind'][] = ['ride'];
+    if (this.unlocked.truck) kinds.push('haul', 'haul', 'export');
+    const k = kinds[Math.floor(r() * kinds.length)];
+    const scale = 1 + this.bestPop / 3500;
+    const id = this.nextContract++;
+    const have = (m: Mode) => this.transit.lines.some((l) => l.kind === m);
+    if (k === 'ride') {
+      const modes = MODE_ORDER.filter((m) => m === 'bus' ? true : this.unlocked[m as keyof Game['unlocked']]);
+      const mode = modes[Math.floor(r() * modes.length)];
+      const target = Math.round((160 + r() * 260) * scale / 10) * 10;
+      const reward = Math.round(target * MODES[mode].fare * 9 / 50) * 50 + 400;
+      this.contracts.push({ id, kind: 'ride', mode, title: `Carry ${target} riders by ${MODES[mode].label.toLowerCase()}`, desc: have(mode) ? 'Every boarding on your lines counts.' : `You have no ${MODES[mode].label.toLowerCase()} line yet. Build one to take this.`, target, progress: 0, reward, state: 'offer', until: t + DAY * 3, last: 0 });
+    } else if (k === 'haul') {
+      const cargo = Math.floor(r() * 3);
+      const target = Math.round((60 + r() * 100) * scale / 10) * 10;
+      const reward = Math.round(target * CARGO_INFO[CARGO_LIST[cargo]].rate * 22 / 50) * 50 + 500;
+      this.contracts.push({ id, kind: 'haul', cargo, title: `Deliver ${target} units of ${CARGO_INFO[CARGO_LIST[cargo]].label.toLowerCase()}`, desc: 'Count every unit that reaches a shop, a factory or the terminal.', target, progress: 0, reward, state: 'offer', until: t + DAY * 3, last: 0 });
+    } else {
+      const target = Math.round((50 + r() * 80) * scale / 10) * 10;
+      const reward = Math.round(target * 1.15 * 22 / 50) * 50 + 600;
+      this.contracts.push({ id, kind: 'export', title: `Export ${target} units through the terminal`, desc: 'Haul anything to a cargo terminal. It pays a premium.', target, progress: 0, reward, state: 'offer', until: t + DAY * 3, last: 0 });
+    }
+  }
+
+  acceptContract(id: number): Cmd {
+    const c = this.contracts.find((x) => x.id === id);
+    if (!c || c.state !== 'offer') return { ok: false, msg: 'That offer is gone.' };
+    if (this.contracts.filter((x) => x.state === 'active').length >= 3) return { ok: false, msg: 'You can run three contracts at a time.' };
+    c.state = 'active'; c.until = this.t + DAY * (c.kind === 'ride' ? 5 : 4); c.last = this.contractSource(c); c.progress = 0;
+    this.emit('sfx', 'click');
+    return { ok: true };
+  }
+  declineContract(id: number) { this.contracts = this.contracts.filter((c) => c.id !== id); }
+
+  /** planes: every airport sends and receives flights, more when the terminal is busy */
+  private flightTick() {
+    for (const b of this.city.buildings.values()) {
+      if (b.special !== 'airport') continue;
+      let at = this.flightAt.get(b.id);
+      if (at === undefined) { at = this.t + 8; this.flightAt.set(b.id, at); }
+      if (this.t < at) continue;
+      const staff = Math.min(1, 0.4 + b.workers.length / b.cap * 0.6);
+      const pax = Math.round((22 + b.guests.length * 2.6) * staff + this.rand() * 12);
+      const arriving = this.flights % 2 === 0;
+      this.flights++;
+      this.earn(pax * 6.5, 'air');
+      this.emit('flight', { id: b.id, pax, arriving, x: wx(b.x), z: wz(b.y), rot: b.rotFoot, foot: b.foot });
+      this.flightAt.set(b.id, this.t + DAY / (5 + Math.min(5, b.guests.length / 5)) * (0.8 + this.rand() * 0.4));
+    }
+  }
+
+  private contractTick() {
+    for (const c of this.contracts) {
+      if (c.state !== 'active') continue;
+      const src = this.contractSource(c);
+      if (src > c.last) c.progress += src - c.last;
+      c.last = src;
+      if (c.progress >= c.target) {
+        c.state = 'done'; c.until = this.t + DAY * 1.5;
+        this.earn(c.reward, 'contracts'); this.contractsDone++;
+        this.toast(`Contract complete: ${c.title}. +$${c.reward.toLocaleString()}`, 'good');
+        this.emit('sfx', 'milestone'); this.emit('contract', c);
+      } else if (this.t > c.until) {
+        c.state = 'failed'; c.until = this.t + DAY * 1.5;
+        this.toast(`Contract missed: ${c.title}. No penalty, but the client moved on.`, 'warn');
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- money
 
   earn(a: number, why = '') {
@@ -436,7 +540,7 @@ export class Game {
       l.dayCost += lc / DAY * dt;
       up += lc;
     }
-    for (const b of this.city.buildings.values()) if (b.special === 'school') up += UPKEEP.school; else if (b.special === 'clinic') up += UPKEEP.clinic;
+    for (const b of this.city.buildings.values()) if (b.special === 'school') up += UPKEEP.school; else if (b.special === 'clinic') up += UPKEEP.clinic; else if (b.special === 'airport') up += UPKEEP.airport;
     if (this.policies.toll) up += 20;
     if (this.policies.busLanes) up += 30;
     if (this.policies.stagger) up += 25;
@@ -457,6 +561,8 @@ export class Game {
       this.emit('milestone', g);
     }
     if (s.pop > this.bestPop) this.bestPop = s.pop;
+    this.contractTick();
+    this.flightTick();
     this.updateUnlocks();
   }
 
@@ -469,6 +575,7 @@ export class Game {
     for (const k of ['truck', 'freight'] as const) {
       if (!u[k] && p >= UNLOCK[k]) { u[k] = true; if (!silent) { this.toast(k === 'truck' ? 'Freight unlocked: haul food, stone and goods by truck for pay.' : 'Freight rail unlocked: long trains for heavy loads.', 'good'); this.emit('unlock', k); } }
     }
+    if (!u.airport && p >= UNLOCK.airport) { u.airport = true; if (!silent) { this.toast('Airports unlocked: a runway, a terminal and planes overhead. Services tool, key 8.', 'good'); this.emit('unlock', 'airport'); } }
     for (const k of ['school', 'clinic'] as const) {
       if (!u[k] && p >= UNLOCK[k]) { u[k] = true; if (!silent) { this.toast(k === 'school' ? 'Schools unlocked: kids need somewhere to go every morning.' : 'Clinics unlocked: keep your seniors healthy.', 'good'); this.emit('unlock', k); } }
     }
@@ -711,9 +818,58 @@ export class Game {
     return { ok: true, cost: COST.arena };
   }
 
+  /** where an airport would sit if its top-left corner were tile i: the footprint, its orientation and a road on a long side */
+  planAirport(i: number, rotOnly = -1, needRoad = true): { ok: boolean; reason?: string; foot: number[]; x: number; y: number; rot: number } {
+    const w = this.world;
+    const x0 = tileX(i), y0 = tileY(i);
+    const none = (reason: string) => ({ ok: false, reason, foot: [] as number[], x: x0, y: y0, rot: 1 });
+    let lastReason = 'Needs open ground, three tiles by two, with a road along a long side.';
+    // rot = direction of the road the terminal faces (0 E, 1 S, 2 W, 3 N)
+    for (const rot of rotOnly >= 0 ? [rotOnly] : [1, 3, 0, 2]) {
+      const wide = rot === 1 || rot === 3;
+      const fw = wide ? 3 : 2, fd = wide ? 2 : 3;
+      const foot: number[] = [];
+      let bad = '';
+      for (let dy = 0; dy < fd && !bad; dy++) for (let dx = 0; dx < fw; dx++) {
+        const x = x0 + dx, y = y0 + dy;
+        if (!inMap(x, y)) { bad = 'That is too close to the edge of the map.'; break; }
+        const t = tileIdx(x, y);
+        if (!w.isUnlocked(t)) { bad = 'Part of that is in land you have not bought.'; break; }
+        if (w.water[t]) { bad = 'The runway cannot sit on water.'; break; }
+        if (!w.isEmpty(t) || w.rail[t]) { bad = 'Something is in the way. An airport needs a clear 3 by 2 block.'; break; }
+        foot.push(t);
+      }
+      if (bad) { lastReason = bad; continue; }
+      // a road along the front edge
+      const front: number[] = [];
+      for (let k = 0; k < (wide ? fw : fd); k++) {
+        const x = rot === 0 ? x0 + fw : rot === 2 ? x0 - 1 : x0 + k;
+        const y = rot === 1 ? y0 + fd : rot === 3 ? y0 - 1 : y0 + k;
+        if (inMap(x, y)) front.push(tileIdx(x, y));
+      }
+      if (needRoad && !front.some((t) => w.road[t])) { lastReason = 'The terminal side needs a road beside it.'; continue; }
+      return { ok: true, foot, x: x0, y: y0, rot };
+    }
+    return none(lastReason);
+  }
+
   placeService(kind: ServiceKind, i: number): Cmd {
     const w = this.world, def = SERVICE[kind];
-    if (!this.unlocked[kind]) return { ok: false, msg: `${def.label}s unlock at ${def.unlock} residents.` };
+    if (!this.unlocked[kind]) return { ok: false, msg: `${def.label}s unlock at ${def.unlock.toLocaleString()} residents.` };
+    if (kind === 'airport') {
+      if ([...this.city.buildings.values()].some((b) => b.special === 'airport')) return { ok: false, msg: 'One airport is plenty for this city.' };
+      const pl = this.planAirport(i);
+      if (!pl.ok) return { ok: false, msg: pl.reason };
+      if (this.money < def.cost) return { ok: false, msg: 'Not enough money. Need $' + def.cost.toLocaleString() + '.' };
+      this.spend(def.cost);
+      const b = this.city.addBuilding(pl.x, pl.y, 'com', 3, 'airport', pl.foot, pl.rot);
+      w.version.tiles++;
+      for (const p of this.city.persons) if (!p.work) this.city.occupy(p);
+      this.flightAt.set(b.id, this.t + 6);
+      this.emit('sfx', 'build');
+      this.toast(`${b.name} is open. Planes will start coming in. Connect it with roads and transit.`, 'good');
+      return { ok: true, cost: def.cost };
+    }
     if (!w.isUnlocked(i) || w.water[i] || !w.isEmpty(i) || w.rail[i]) return { ok: false, msg: 'Pick an empty tile.' };
     const rf = this.city.roadFor({ x: tileX(i), y: tileY(i) });
     if (rf.tile < 0) return { ok: false, msg: `A ${kind} needs a road beside it.` };
@@ -1040,6 +1196,7 @@ export class Game {
   }
   deleteLine(line: Line): Cmd {
     const m = MODES[line.kind];
+    this.retiredBoard[line.kind] += line.boardings;
     const refund = Math.round(60 + (line.kind === 'gondola' ? this.transit.lineLength(line) : line.tiles.length) * m.trackCost * 0.3 + line.vehicles.length * m.vehCost * 0.4);
     this.transit.deleteLine(line);
     this.earn(refund, 'refund');
@@ -1094,7 +1251,7 @@ export interface SaveData {
   policies: Policies; districts: number[]; roads: number[]; parks: number[];
   buildings: (number | string)[][]; stops: [number, number, string, number][]; people?: PersonSave[]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number; fare?: number }[];
   daysSurvived: number; dayIncome: number; peak: number; diff?: number;
-  fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number> };
+  fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number>; contracts?: Contract[]; done?: number };
 }
 
 export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number }
@@ -1109,8 +1266,8 @@ export function serialize(g: Game): SaveData {
   const code = { res: 0, com: 1, ind: 2 } as const;
   const blist = [...g.city.buildings.values()];
   const bIndex = new Map(blist.map((b, i) => [b.id, i] as const));
-  const sp = { arena: 3, school: 4, clinic: 5, farm: 6, quarry: 7, factory: 8, terminal: 9 } as const;
-  const buildings = blist.map((b) => [b.x, b.y, b.special ? sp[b.special] : code[b.kind], b.level, b.variant, b.rot, b.residents.length, b.venue ?? '', b.name, ...b.out.map((v) => Math.round(v * 10) / 10), ...b.stock.map((v) => Math.round(v * 10) / 10), Math.round(b.eff * 100) / 100]);
+  const sp = { arena: 3, school: 4, clinic: 5, farm: 6, quarry: 7, factory: 8, terminal: 9, airport: 10 } as const;
+  const buildings = blist.map((b) => [b.x, b.y, b.special ? sp[b.special] : code[b.kind], b.level, b.variant, b.rot, b.residents.length, b.venue ?? '', b.name, ...b.out.map((v) => Math.round(v * 10) / 10), ...b.stock.map((v) => Math.round(v * 10) / 10), Math.round(b.eff * 100) / 100, b.rotFoot]);
   const people: PersonSave[] = g.city.persons.map((p) => ({
     i: p.id, b: bIndex.get(p.home.id) ?? 0, h: p.hh.id, f: p.first, l: p.last, a: p.age, t: p.traits,
     n: [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort].map((v) => Math.round(v * 100) / 100),
@@ -1122,7 +1279,7 @@ export function serialize(g: Game): SaveData {
     v: 1, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
     policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, buildings, stops, lines, people,
     daysSurvived: g.daysSurvived, dayIncome: g.dayIncome, peak: g.peakTraffic, diff: g.diff,
-    fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research } },
+    fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research }, contracts: g.contracts.filter((c) => c.state === 'active' || c.state === 'offer'), done: g.contractsDone },
   };
 }
 
@@ -1141,9 +1298,10 @@ export function restore(d: SaveData): Game {
   const kinds = ['res', 'com', 'ind'] as const;
   const blist: Building[] = [];
   for (const row of d.buildings) {
-    const [x, y, k, level, variant, rot, res, venue, name, o0, o1, o2, s0, s1, s2, eff] = row as [number, number, number, number, number, number, number, string, string, number, number, number, number, number, number, number];
-    const special = k === 3 ? 'arena' : k === 4 ? 'school' : k === 5 ? 'clinic' : k === 6 ? 'farm' : k === 7 ? 'quarry' : k === 8 ? 'factory' : k === 9 ? 'terminal' : undefined;
-    const b = special ? g.city.addBuilding(x, y, k >= 6 ? 'ind' : 'com', special === 'arena' ? 3 : 2, special) : g.city.addBuilding(x, y, kinds[k], level);
+    const [x, y, k, level, variant, rot, res, venue, name, o0, o1, o2, s0, s1, s2, eff, rotFoot] = row as [number, number, number, number, number, number, number, string, string, number, number, number, number, number, number, number, number];
+    const special = k === 3 ? 'arena' : k === 4 ? 'school' : k === 5 ? 'clinic' : k === 6 ? 'farm' : k === 7 ? 'quarry' : k === 8 ? 'factory' : k === 9 ? 'terminal' : k === 10 ? 'airport' : undefined;
+    const pl = special === 'airport' ? g.planAirport(tileIdx(x, y), rotFoot ?? 1, false) : null;
+    const b = special ? g.city.addBuilding(x, y, k >= 6 && k <= 9 ? 'ind' : 'com', special === 'arena' || special === 'airport' ? 3 : 2, special, pl?.ok ? pl.foot : [], rotFoot ?? 1) : g.city.addBuilding(x, y, kinds[k], level);
     if (o0 !== undefined) { b.out = [o0, o1, o2]; b.stock = [s0, s1, s2]; b.eff = eff || 1; }
     b.variant = variant; b.rot = rot; b.born = d.t - 200; b.lastLevel = d.t - 100;
     if (venue && !special) b.venue = venue as Building['venue'];
@@ -1176,7 +1334,7 @@ export function restore(d: SaveData): Game {
     for (const ps of d.people) { const p = byOld.get(ps.i); if (p) p.friends = ps.fr.map((f) => byOld.get(f)?.id).filter((x): x is number => x !== undefined); }
   }
   for (const p of g.city.persons) g.city.occupy(p);
-  if (d.fin) { g.loan = d.fin.loan; g.maint = d.fin.maint; g.autoRenew = d.fin.autoRenew; Object.assign(g.research, d.fin.research); }
+  if (d.fin) { g.loan = d.fin.loan; g.maint = d.fin.maint; g.autoRenew = d.fin.autoRenew; Object.assign(g.research, d.fin.research); g.contracts = (d.fin.contracts ?? []).map((c) => ({ ...c, last: 0 })); g.contractsDone = d.fin.done ?? 0; for (const c of g.contracts) if (c.state === 'active') c.last = 0; }
   for (const [tile, k, name, cap] of d.stops) { const s = g.transit.addStop(tile, SAVE_MODES[k] ?? 'bus', name); s.cap = cap; }
   for (const l of d.lines) {
     const line = g.transit.createLine(l.kind, l.tiles);
@@ -1185,7 +1343,7 @@ export function restore(d: SaveData): Game {
     while (line.vehicles.length < l.veh) if (!g.transit.addVehicle(line)) break;
   }
   g.city.updateStats();
-  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.tram = g.unlocked.ferry = g.unlocked.gondola = g.unlocked.arena = g.unlocked.school = g.unlocked.clinic = g.unlocked.truck = g.unlocked.freight = false;
+  g.unlocked.avenue = g.unlocked.policies = g.unlocked.metro = g.unlocked.tram = g.unlocked.ferry = g.unlocked.gondola = g.unlocked.arena = g.unlocked.school = g.unlocked.clinic = g.unlocked.airport = g.unlocked.truck = g.unlocked.freight = false;
   (g as any).updateUnlocks(true);
   g.daysSurvived = d.daysSurvived;
   g.emit('roadsChanged');

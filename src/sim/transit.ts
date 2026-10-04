@@ -29,7 +29,7 @@ export interface TransitHooks {
   breakdown(c: Carrier, x: number, z: number): void;
   /** industries and shops within reach of a point */
   sites(x: number, z: number): Building[];
-  cargoPay(amount: number, line: Line): void;
+  cargoPay(amount: number, line: Line, idx: number, qty: number, terminal: boolean): void;
 }
 
 /** capacity, speed and reliability of the generation a vehicle was built as */
@@ -552,7 +552,7 @@ export class Transit {
         const dist = Math.hypot(stop.x - c.load.fx, stop.z - c.load.fz);
         const pay = q * CARGO_INFO[CARGO_LIST[idx]].rate * Math.max(1.5, dist) * (site.special === 'terminal' ? 1.25 : 1) * (1 + 0.05 * c.lvl);
         line.income += pay; line.dayRev += pay; line.hauled += q; c.earned += pay;
-        this.hooks.cargoPay(pay, line);
+        this.hooks.cargoPay(pay, line, idx, q, site.special === 'terminal');
         c.load.qty -= q; moved += q;
         if (c.load.qty <= 0.01) { c.load = null; break; }
       }

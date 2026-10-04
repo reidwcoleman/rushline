@@ -302,6 +302,8 @@ export class TimeOfDay {
   fog: THREE.FogExp2;
   hour = 6;
   night = 0;
+  /** 0..1 smog over the city */
+  haze = 0;
   private sunPos = new THREE.Vector3();
   constructor(readonly scene: THREE.Scene, readonly sky: Sky, readonly land: Land) {
     this.sun = new THREE.DirectionalLight(0xffffff, 3);
@@ -374,8 +376,9 @@ export class TimeOfDay {
     this.hemi.intensity = lerp(a.hemiI, b.hemiI, s) * (1 + rain * 0.15) * 0.62;
     const fogc = lerpCol(new THREE.Color(), a.fog, b.fog, s);
     if (rain > 0.001) fogc.lerp(new THREE.Color(0x9aa4ae), rain * 0.7);
+    if (this.haze > 0.01) fogc.lerp(new THREE.Color(0xb8a58c), this.haze * 0.5 * (1 - nightK * 0.6));
     this.fog.color.copy(fogc);
-    this.fog.density = 0.0058 + rain * 0.006 + nightK * 0.0012;
+    this.fog.density = 0.0058 + rain * 0.006 + nightK * 0.0012 + this.haze * 0.0034;
     this.scene.background = null;
     const wm = this.land.waterMat.uniforms;
     wm.uSkyH.value.copy(sky.uHor.value);

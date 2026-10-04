@@ -19,7 +19,7 @@ const TOOLS: { id: ToolId; icon: string; label: string; sub: string; key: string
   { id: 'park', icon: 'park', label: 'Park', sub: `Calms the neighbourhood · ${money(COST.park)}`, key: '5' },
   { id: 'arena', icon: 'arena', label: 'Arena', sub: `Match days pack the roads · ${money(COST.arena)}`, key: '6' },
   { id: 'bulldoze', icon: 'bulldoze', label: 'Bulldoze', sub: 'Drag to clear', key: '7' },
-  { id: 'service', icon: 'school', label: 'Services', sub: 'Schools and clinics', key: '8' },
+  { id: 'service', icon: 'school', label: 'Services', sub: 'Schools, clinics, airport', key: '8' },
 ];
 
 export class Hud {
@@ -47,6 +47,9 @@ export class Hud {
   private tickUntil = 0;
   private tickCur = 0;
   private personLbl: HTMLElement | null = null;
+  private emotes = new Map<number, HTMLElement>();
+  private emoteIds: number[] = [];
+  private emoteT = 0;
   private advKey = '';
 
   constructor(readonly app: App, root: HTMLElement) {
@@ -166,7 +169,7 @@ export class Hud {
     const g = this.app.game;
     for (const [id, b] of this.toolBtns) {
       b.classList.toggle('on', this.app.tools.tool === id);
-      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'arena' && !g.unlocked.arena) || (id === 'service' && !g.unlocked.school));
+      b.classList.toggle('lock', (id === 'avenue' && !g.unlocked.avenue) || (id === 'arena' && !g.unlocked.arena) || (id === 'service' && !g.unlocked.school && !g.unlocked.airport));
     }
     // the transit button wears the icon of the mode in hand
     const tb = this.toolBtns.get('transit');
@@ -282,16 +285,16 @@ export class Hud {
     } else if (t.tool === 'service') {
       key += 'svc' + t.service;
       const row = h('div', { class: 'mode-row' });
-      for (const k of ['school', 'clinic'] as const) {
+      for (const k of ['school', 'clinic', 'airport'] as const) {
         const open = g.unlocked[k];
         const chip = h('button', { class: 'mchip' + (t.service === k ? ' on' : '') + (open ? '' : ' lock'), onClick: () => t.setService(k) }, icon(open ? k : 'lock'), h('span', {}, SERVICE[k].label), open ? null : h('small', {}, String(SERVICE[k].unlock)));
-        chip.style.setProperty('--mc', k === 'school' ? '#f2b84b' : '#3aa7a0');
+        chip.style.setProperty('--mc', k === 'school' ? '#f2b84b' : k === 'clinic' ? '#3aa7a0' : '#7cc4ff');
         row.append(chip);
       }
       const sd = SERVICE[t.service];
       node = h('div', { class: 'context glass tcontext' }, row,
-        h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: t.service === 'school' ? '#f2b84b' : '#3aa7a0' } }),
-          h('div', { class: 't' }, h('b', {}, `${sd.label} · ${money(sd.cost)}`), h('span', {}, `${sd.tag} Click empty ground beside a road.`)),
+        h('div', { class: 'trow' }, h('div', { class: 'sw', style: { background: t.service === 'school' ? '#f2b84b' : t.service === 'clinic' ? '#3aa7a0' : '#7cc4ff' } }),
+          h('div', { class: 't' }, h('b', {}, `${sd.label} · ${money(sd.cost)}`), h('span', {}, t.service === 'airport' ? `${sd.tag} Click where the top-left corner should go.` : `${sd.tag} Click empty ground beside a road.`)),
           h('button', { class: 'btn ghost sm', onClick: () => t.select('inspect') }, 'Done')));
     } else if (t.tool !== 'inspect') {
       const def = TOOLS.find((x) => x.id === t.tool)!;
@@ -460,9 +463,58 @@ export class Hud {
 
   // ------------------------------------------------------------ world labels
 
+  /** a hungry, tired, stuck or delighted citizen shows it above their head */
+  private emoteOf(p: import('../sim/types.ts').Person): { ic: string; c: string } | null {
+    const n = p.needs;
+    if (p.phase === 'wait' && this.app.game.t - p.waitStart > 35) return { ic: 'warn', c: '#ff7a6b' };
+    if (p.phase === 'drive' && p.car && p.car.stuck > 4) return { ic: 'warn', c: '#ff7a6b' };
+    if (n.hunger < 0.22) return { ic: 'hunger', c: '#ffb02e' };
+    if (n.energy < 0.14) return { ic: 'moon', c: '#9bb4ff' };
+    if (n.social < 0.14) return { ic: 'social', c: '#7cc4ff' };
+    if (p.mood > 0.84) return { ic: 'fun', c: '#4ade80' };
+    return null;
+  }
+  private updateEmotes(_dt: number) {
+    const app = this.app, v = app.view, rig = v.rig;
+    const now = performance.now();
+    const near = rig.dist < 26 && !app.modal && app.game.speed >= 0;
+    if (near && now > this.emoteT) {
+      this.emoteT = now + 700;
+      const picks: { id: number; d: number }[] = [];
+      for (const dot of v.citizens.dots) {
+        const dd = Math.hypot(dot.x - rig.target.x, dot.z - rig.target.z);
+        if (dd > rig.dist * 0.7) continue;
+        if (this.emoteOf(dot.p)) picks.push({ id: dot.p.id, d: dd });
+      }
+      picks.sort((a, b) => a.d - b.d);
+      this.emoteIds = picks.slice(0, 6).map((x) => x.id);
+    }
+    const seen = new Set<number>();
+    if (near) for (const id of this.emoteIds) {
+      const p = app.game.city.personById.get(id);
+      if (!p) continue;
+      const e = this.emoteOf(p);
+      if (!e) continue;
+      const w = v.citizens.where(p);
+      if (w.inside) continue;
+      const sp = rig.toScreen(this.tmpV.set(w.x, w.y + 0.2, w.z));
+      if (!sp.visible || sp.x < 0 || sp.x > innerWidth || sp.y < 0 || sp.y > innerHeight) continue;
+      seen.add(id);
+      let el = this.emotes.get(id);
+      if (!el) { el = h('div', { class: 'lbl' }, h('div', { class: 'emote' }, icon(e.ic))); this.emotes.set(id, el); this.labels.append(el); }
+      const em = el.firstElementChild as HTMLElement;
+      if ((el as any)._ic !== e.ic) { (el as any)._ic = e.ic; clear(em); em.append(icon(e.ic)); }
+      em.style.setProperty('--c', e.c);
+      el.style.transform = `translate(${sp.x}px, ${sp.y}px) translate(-50%, -100%)`;
+      el.style.left = '0'; el.style.top = '0';
+    }
+    for (const [id, el] of this.emotes) if (!seen.has(id)) { el.remove(); this.emotes.delete(id); }
+  }
+
   private updateLabels() {
     const app = this.app, g = app.game, v = app.view;
     const rig = v.rig;
+    const dtSafe = 0;
     const showAll = v.mode === 'transit' || app.tools.tool === 'transit';
     const sel = app.tools.selection;
     const hoverTile = app.tools.hover?.tile ?? -1;
@@ -526,6 +578,8 @@ export class Hud {
       el.style.left = '0'; el.style.top = '0';
     }
     for (const [id, el] of this.cargoLbl) if (!seenC.has(id)) { el.remove(); this.cargoLbl.delete(id); }
+    // little emotes over nearby citizens when the camera is close
+    this.updateEmotes(dtSafe);
     // thought bubble over the citizen being watched
     const fp = v.focusPerson;
     if (fp && !fp.dead && !app.panels.open) {

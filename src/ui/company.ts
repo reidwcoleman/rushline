@@ -32,14 +32,14 @@ export function rating(netWorth: number, profit: number): { letter: string; word
 
 export function companyPanel(P: Panels): Built {
   const app = P.app, g = app.game;
-  let tab: 'books' | 'lines' | 'fleet' | 'research' = 'books';
+  let tab: 'books' | 'lines' | 'fleet' | 'research' | 'jobs' = 'books';
   const body = h('div', { class: 'co-body' });
   const tabs = h('div', { class: 'tabs' });
   let key = '';
 
   const drawTabs = () => {
     clear(tabs);
-    for (const [id, label] of [['books', 'Books'], ['lines', 'Lines'], ['fleet', 'Fleet'], ['research', 'Research']] as const) {
+    for (const [id, label] of [['books', 'Books'], ['lines', 'Lines'], ['fleet', 'Fleet'], ['research', 'Research'], ['jobs', 'Jobs']] as const) {
       tabs.append(h('button', { class: 'tab' + (tab === id ? ' on' : ''), onClick: () => { tab = id; key = ''; drawTabs(); upd(); } }, label));
     }
   };
@@ -60,8 +60,10 @@ export function companyPanel(P: Panels): Built {
   const books = () => {
     const hist = g.bookHist.slice(-14);
     const days = hist.map((b) => ({ inc: sum(b.inc), exp: sum(b.exp) }));
+    // running profit leaves out one-off spending on building and buying vehicles
+    const op = (b: { inc: Record<string, number>; exp: Record<string, number> }) => sum(b.inc) - ((b.exp.upkeep ?? 0) + (b.exp.service ?? 0) + (b.exp.interest ?? 0) + (b.exp.imports ?? 0) + (b.exp.research ?? 0));
     const last = hist[hist.length - 1];
-    const avgNet = days.length ? days.slice(-4).reduce((a, d) => a + d.inc - d.exp, 0) / Math.min(4, days.length) : 0;
+    const avgNet = hist.length ? hist.slice(-4).reduce((a, b) => a + op(b), 0) / Math.min(4, hist.length) : 0;
     const rt = rating(g.netWorth(), avgNet);
     const top = h('div', { class: 'co-top' },
       h('div', {}, h('div', { class: 'k' }, 'Company value'), h('div', { class: 'big-n num' }, money(g.netWorth()))),
@@ -70,7 +72,7 @@ export function companyPanel(P: Panels): Built {
       kvRow('Cash', money(g.money), g.money < 0 ? 'var(--red)' : ''),
       kvRow('Loan', g.loan ? money(g.loan) : 'none'),
       kvRow('Network assets', money(g.assets())),
-      kvRow('Average profit', `${avgNet >= 0 ? '+' : '-'}${money(Math.abs(avgNet))} a day`, avgNet >= 0 ? 'var(--green)' : 'var(--red)'));
+      kvRow('Operating profit', `${avgNet >= 0 ? '+' : '-'}${money(Math.abs(avgNet))} a day`, avgNet >= 0 ? 'var(--green)' : 'var(--red)'));
     const chart = h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Last two weeks'), days.length ? bars(days) : h('div', { class: 'empty', style: { padding: '0' } }, 'The first full day is still being counted.'));
     const brk = h('div', { class: 'sec' }, h('div', { class: 'k' }, last ? `Yesterday` : 'Today so far'));
     const ledger = last ?? g.book;
@@ -163,12 +165,40 @@ export function companyPanel(P: Panels): Built {
     }
   };
 
+  const jobsTab = () => {
+    const act = g.contracts.filter((c) => c.state === 'active');
+    const off = g.contracts.filter((c) => c.state === 'offer');
+    const past = g.contracts.filter((c) => c.state === 'done' || c.state === 'failed');
+    body.append(h('div', { class: 'tri' },
+      h('div', {}, h('b', { class: 'num' }, String(act.length)), h('span', {}, 'Active')),
+      h('div', {}, h('b', { class: 'num' }, String(off.length)), h('span', {}, 'Offers')),
+      h('div', {}, h('b', { class: 'num' }, String(g.contractsDone)), h('span', {}, 'Completed')),
+      h('div', {}, h('b', { class: 'num' }, `${3 - act.length}`), h('span', {}, 'Free slots'))));
+    const days = (c: typeof act[number]) => Math.max(0, (c.until - g.t) / DAY);
+    if (act.length) body.append(h('div', { class: 'k' }, 'In progress'));
+    for (const c of act) {
+      body.append(h('div', { class: 'job active' }, h('div', { class: 'row' }, h('b', {}, c.title), h('span', { class: 'v num up' }, '+' + money(c.reward))),
+        P.meter(c.progress / c.target, 'var(--amber)').el,
+        h('div', { class: 'row' }, h('small', {}, `${Math.floor(c.progress)} of ${c.target}`), h('small', {}, `${days(c).toFixed(1)} days left`))));
+    }
+    if (off.length) body.append(h('div', { class: 'k' }, 'Offers'));
+    for (const c of off) {
+      body.append(h('div', { class: 'job' }, h('div', { class: 'row' }, h('b', {}, c.title), h('span', { class: 'v num up' }, '+' + money(c.reward))),
+        h('small', {}, c.desc),
+        h('div', { class: 'row' }, h('small', {}, `${days(c).toFixed(1)} days to decide`), h('div', { class: 'actions' },
+          h('button', { class: 'btn sm ghost', onClick: () => { g.declineContract(c.id); key = ''; upd(); } }, 'Pass'),
+          h('button', { class: 'btn sm primary', onClick: () => { const r = g.acceptContract(c.id); if (!r.ok) app.toast(r.msg ?? '', 'warn'); key = ''; upd(); } }, 'Accept')))));
+    }
+    if (!act.length && !off.length) body.append(h('div', { class: 'empty' }, g.bestPop < 250 ? 'Clients start calling at 250 residents.' : 'No offers right now. New ones arrive every day.'));
+    if (past.length) body.append(h('div', { class: 'k' }, 'Recent'), ...past.slice(-4).reverse().map((c) => h('div', { class: 'lr' }, h('span', {}, c.title), h('b', { class: 'num ' + (c.state === 'done' ? 'up' : 'down') }, c.state === 'done' ? '+' + money(c.reward) : 'missed'))));
+  };
+
   const upd = () => {
-    const k = `${tab}|${g.bookHist.length}|${Math.floor(g.t / 4)}|${g.loan}|${g.maint}|${g.autoRenew}|${g.project ? g.project.mode : ''}|${g.research.bus}${g.research.tram}${g.research.metro}${g.research.ferry}${g.research.gondola}|${Math.floor(g.money / 400)}|${g.transit.lines.length}`;
+    const k = `${tab}|${g.contracts.map((c) => c.id + c.state + Math.floor(c.progress / 4)).join(',')}|${g.bookHist.length}|${Math.floor(g.t / 4)}|${g.loan}|${g.maint}|${g.autoRenew}|${g.project ? g.project.mode : ''}|${g.research.bus}${g.research.tram}${g.research.metro}${g.research.ferry}${g.research.gondola}|${Math.floor(g.money / 400)}|${g.transit.lines.length}`;
     if (k === key) return;
     key = k;
     clear(body);
-    if (tab === 'books') books(); else if (tab === 'lines') linesTab(); else if (tab === 'fleet') fleetTab(); else researchTab();
+    if (tab === 'books') books(); else if (tab === 'lines') linesTab(); else if (tab === 'fleet') fleetTab(); else if (tab === 'research') researchTab(); else jobsTab();
   };
   drawTabs();
   const el = P.shell('Company', 'Books, fleet and research', tabs, body);

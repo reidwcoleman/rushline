@@ -18,6 +18,7 @@ import { Life } from './life.ts';
 import { ParksView } from './parks.ts';
 import { isRoadMode } from '../sim/modes.ts';
 import { CitizensView } from './citizens.ts';
+import { AirView } from './air.ts';
 import type { Person } from '../sim/types.ts';
 
 export type OverlayMode = 'none' | 'traffic' | 'transit' | 'happy';
@@ -40,6 +41,7 @@ export class View {
   life: Life;
   parks: ParksView;
   citizens: CitizensView;
+  air: AirView;
   /** the citizen the marker rides on, and whether the camera follows them */
   focusPerson: Person | null = null;
   follow = false;
@@ -98,6 +100,7 @@ export class View {
     this.life = new Life(this.scene, game.world);
     this.parks = new ParksView(this.scene, game.world);
     this.citizens = new CitizensView(this.scene, game);
+    this.air = new AirView(this.scene, game, this.fx);
     this.citizens.buildingH = (b) => this.buildings.heightOf(b);
     this.citizens.carrierY = (p) => {
       const c = p.ride; if (!c) return 0.4;
@@ -185,6 +188,7 @@ export class View {
     this.titleShift += ((this.app_titleTarget ? 1 : 0) - this.titleShift) * (1 - Math.exp(-dt * 2.2));
     if (this.titleShift > 0.002) { this.rig.camera.setViewOffset(innerWidth, innerHeight, -innerWidth * 0.19 * this.titleShift, 0, innerWidth, innerHeight); this.shiftApplied = true; }
     else if (this.shiftApplied) { this.rig.camera.clearViewOffset(); this.shiftApplied = false; }
+    this.tod.haze += (game.city.stats.smog - this.tod.haze) * (1 - Math.exp(-dt * 0.4));
     this.tod.update(hour, this.rainAmt, dt);
     this.envT -= dt;
     // regenerate the sky reflection only when the sky has moved enough to matter
@@ -211,6 +215,7 @@ export class View {
     this.fleet.update(game.traffic, game.transit, this.accidents, (l, d) => this.tgfx.cableY(l, d), this.time);
     this.wakes(dt);
     this.breakdownSmoke(dt);
+    this.air.update(game.speed > 0 ? dt : 0);
     this.tgfx.updateCrowd(this.time);
     // smoke
     const gust = 0.6 + 0.4 * Math.sin(this.time * 0.13);
