@@ -3,6 +3,7 @@ import { h, icon, clear, money } from './dom.ts';
 import { drawAvatar } from './avatar.ts';
 import { NEED_KEYS, NEED_LABEL, TRAITS, moodWord, moodColorHex, fullName, careerTier } from '../sim/people.ts';
 import { dayOf, hourOf } from '../sim/types.ts';
+import { HALF } from '../sim/world.ts';
 import type { Person, Building } from '../sim/types.ts';
 import type { FeedItem } from '../sim/city.ts';
 import type { App } from './app.ts';
@@ -125,10 +126,10 @@ export function citizenPanel(P: Panels, id: number): Built {
     vLove.onclick = () => { if (mate) app.selectPerson(mate); };
     vHome.textContent = city.addressOf(p.home);
     vHome.style.cursor = 'pointer';
-    vHome.onclick = () => app.view.rig.focus(p.home.x - 20 + 0.5, p.home.y - 20 + 0.5, 14);
+    vHome.onclick = () => app.view.rig.focus(p.home.x - HALF + 0.5, p.home.y - HALF + 0.5, 14);
     vWork.textContent = p.work ? p.work.name : p.stage === 'adult' ? 'Unemployed' : '–';
     vWork.style.cursor = p.work ? 'pointer' : '';
-    vWork.onclick = () => { if (p.work) app.view.rig.focus(p.work.x - 20 + 0.5, p.work.y - 20 + 0.5, 14); };
+    vWork.onclick = () => { if (p.work) app.view.rig.focus(p.work.x - HALF + 0.5, p.work.y - HALF + 0.5, 14); };
     vPay.textContent = p.wage ? `${money(p.wage)} a day · tier ${careerTier(p.xp) + 1}` : '–';
     vCash.textContent = money(p.wallet);
     vCash.style.color = p.wallet < 0 ? 'var(--red)' : '';
@@ -143,8 +144,8 @@ export function citizenPanel(P: Panels, id: number): Built {
   const el = h('div', { class: 'side glass citizen' },
     h('div', { class: 'head' }, h('div', { class: 'who' }, cv, h('div', {}, name, sub, moodChip)), h('button', { class: 'x', title: 'Close', onClick: () => P.close() }, icon('close'))),
     h('div', { class: 'actions' }, followBtn,
-      h('button', { class: 'btn sm', onClick: () => app.view.rig.focus(p0.home.x - 20 + 0.5, p0.home.y - 20 + 0.5, 14) }, 'Home'),
-      h('button', { class: 'btn sm', onClick: () => { const p = city.personById.get(id); if (p?.work) app.view.rig.focus(p.work.x - 20 + 0.5, p.work.y - 20 + 0.5, 14); } }, 'Work')),
+      h('button', { class: 'btn sm', onClick: () => app.view.rig.focus(p0.home.x - HALF + 0.5, p0.home.y - HALF + 0.5, 14) }, 'Home'),
+      h('button', { class: 'btn sm', onClick: () => { const p = city.personById.get(id); if (p?.work) app.view.rig.focus(p.work.x - HALF + 0.5, p.work.y - HALF + 0.5, 14); } }, 'Work')),
     h('div', { class: 'live' }, h('div', { class: 'k' }, 'Right now'), now, thought, wishEl),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Do something'), doRow, orderEl),
     h('div', { class: 'needs' }, ...needs.map((n) => n.row)),

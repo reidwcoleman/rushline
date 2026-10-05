@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { MeshBuilder, patch, lin, instAttr, tmpObj } from './gfx.ts';
 import type { Traffic } from '../sim/traffic.ts';
 import type { Transit } from '../sim/transit.ts';
-import { WATER_LEVEL, type World } from '../sim/world.ts';
+import { WATER_LEVEL, N, HALF, type World } from '../sim/world.ts';
 import type { Line } from '../sim/types.ts';
 import { CARGO_INFO, CARGO_LIST } from '../sim/industry.ts';
 
@@ -339,7 +339,7 @@ export class Fleet {
       }
     }
     for (const t of accidents) {
-      const x = ((t % 40) - 20 + 0.5), z = (Math.floor(t / 40) - 20 + 0.5);
+      const x = ((t % N) - HALF + 0.5), z = (Math.floor(t / N) - HALF + 0.5);
       const h = ((t * 2654435761) >>> 0) / 4294967296;
       tmpC.set(0xd64545); this.putLin(this.cars[0], x - 0.1, 0.016, z + 0.06, 0.6 + h, tmpC);
       tmpC.set(0x3b82f6); this.putLin(this.cars[1], x + 0.13, 0.016, z - 0.07, -0.8 + h * 0.6, tmpC);
@@ -370,8 +370,8 @@ export class Fleet {
           for (let k = 0; k < 3; k++) {
             line.poly.at(c.d - dir * k * 0.207, c.off, pos);
             const ang = pos.ang + (dir < 0 ? Math.PI : 0);
-            const tx = Math.floor(pos.x + 20), ty = Math.floor(pos.z + 20);
-            const y = 0.0215 + (tx >= 0 && ty >= 0 && tx < 40 && ty < 40 && w.water[ty * 40 + tx] ? 0.022 : 0);
+            const tx = Math.floor(pos.x + HALF), ty = Math.floor(pos.z + HALF);
+            const y = 0.0215 + (tx >= 0 && ty >= 0 && tx < N && ty < N && w.water[ty * N + tx] ? 0.022 : 0);
             if (k === 0) this.putLin(this.tramHead, pos.x, y, pos.z, ang, tmpC);
             else if (k === 2) this.putLin(this.tramHead, pos.x, y, pos.z, ang + Math.PI, tmpC);
             else this.putLin(this.tramMid, pos.x, y, pos.z, ang, tmpC);

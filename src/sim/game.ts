@@ -1,5 +1,5 @@
 // The game: owns the world, traffic, transit and city; handles commands, money, events and the stability meter.
-import { World, N, DX, DY, tileIdx, tileX, tileY, inMap, DN, DS, distIdx, wx, wz } from './world.ts';
+import { World, N, HALF, DX, DY, tileIdx, tileX, tileY, inMap, DN, DS, distIdx, wx, wz } from './world.ts';
 import { Traffic } from './traffic.ts';
 import { Transit } from './transit.ts';
 import { MODES, MODE_ORDER, isSolidCode, isRoadMode, isCargoMode, type Mode } from './modes.ts';
@@ -219,11 +219,11 @@ export class Game {
   private seedTown() {
     const w = this.world;
     // find a centre where a plus-shaped main street is mostly dry
-    let best = { x: 20, y: 20, wet: 99 };
+    let best = { x: HALF, y: HALF, wet: 99 };
     for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
-      const cx = 20 + dx, cy = 20 + dy;
+      const cx = HALF + dx, cy = HALF + dy;
       let wet = 0;
-      for (let k = -7; k <= 7; k++) {
+      for (let k = -9; k <= 9; k++) {
         if (w.water[tileIdx(cx + k, cy)]) wet++;
         if (w.water[tileIdx(cx, cy + k)]) wet++;
       }
@@ -235,15 +235,15 @@ export class Game {
       const i = tileIdx(x, y);
       if (w.isUnlocked(i)) { w.road[i] = k; w.tree[i] = 0; }
     };
-    for (let k = -7; k <= 7; k++) { lay(cx + k, cy, k > -3 && k < 3 ? 2 : 1); lay(cx, cy + k, k > -3 && k < 3 ? 2 : 1); }
+    for (let k = -9; k <= 9; k++) { lay(cx + k, cy, k > -4 && k < 4 ? 2 : 1); lay(cx, cy + k, k > -4 && k < 4 ? 2 : 1); }
     // a small block grid around the centre
-    for (let k = -5; k <= 5; k++) { lay(cx + k, cy - 4); lay(cx + k, cy + 4); lay(cx - 4, cy + k); lay(cx + 4, cy + k); }
+    for (let k = -7; k <= 7; k++) { lay(cx + k, cy - 5); lay(cx + k, cy + 5); lay(cx - 5, cy + k); lay(cx + 5, cy + k); }
     this.unlocked.avenue = false;
     w.version.roads++;
     this.city.refreshAccess();
     // houses and a few shops
     const spots: number[] = [];
-    for (let y = cy - 6; y <= cy + 6; y++) for (let x = cx - 6; x <= cx + 6; x++) {
+    for (let y = cy - 8; y <= cy + 8; y++) for (let x = cx - 8; x <= cx + 8; x++) {
       if (!inMap(x, y)) continue;
       const i = tileIdx(x, y);
       if (!w.buildable(i) || !w.isEmpty(i)) continue;
@@ -255,12 +255,12 @@ export class Game {
     for (let i = spots.length - 1; i > 0; i--) { const j = Math.floor(this.rand() * (i + 1)); [spots[i], spots[j]] = [spots[j], spots[i]]; }
     let r = 0, c = 0, ind = 0;
     for (const i of spots) {
-      if (r + c + ind >= 22) break;
+      if (r + c + ind >= 30) break;
       const x = tileX(i), y = tileY(i);
       const cen = Math.hypot(x - cx, y - cy);
       let kind: 'res' | 'com' | 'ind' = 'res';
-      if (cen < 3.2 && c < 5) { kind = 'com'; c++; }
-      else if (cen > 5 && ind < 3) { kind = 'ind'; ind++; }
+      if (cen < 3.6 && c < 6) { kind = 'com'; c++; }
+      else if (cen > 6 && ind < 4) { kind = 'ind'; ind++; }
       else r++;
       this.city.addBuilding(x, y, kind, kind === 'com' && cen < 2.2 && c < 3 ? 2 : 1);
     }
@@ -1422,7 +1422,7 @@ export class Game {
 // ------------------------------------------------------------------ save / load
 
 export interface SaveData {
-  v: 1; seed: number; t: number; money: number; name: string; stability: number; goalIdx: number; bestPop: number;
+  v: 1; n?: number; seed: number; t: number; money: number; name: string; stability: number; goalIdx: number; bestPop: number;
   policies: Policies; districts: number[]; roads: number[]; parks: number[]; jct?: number[];
   buildings: (number | string)[][]; stops: [number, number, string, number][]; people?: PersonSave[]; lines: { kind: Mode; tiles: number[]; color: number; name: string; veh: number; fare?: number }[];
   daysSurvived: number; dayIncome: number; peak: number; diff?: number;
@@ -1451,7 +1451,7 @@ export function serialize(g: Game): SaveData {
   const stops = g.transit.stops.map((s) => [s.tile, SAVE_MODES.indexOf(s.kind), s.name, s.cap] as [number, number, string, number]);
   const lines = g.transit.lines.map((l) => ({ kind: l.kind, tiles: l.stops.map((s) => s.tile), color: l.color, name: l.name, veh: l.vehicles.length, fare: l.fareMul }));
   return {
-    v: 1, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
+    v: 1, n: N, seed: g.seed, t: g.t, money: g.money, name: g.name, stability: g.stability, goalIdx: g.goalIdx, bestPop: g.bestPop,
     policies: { ...g.policies }, districts: w.districts.filter((d) => d.unlocked).map((d) => d.index), roads, parks, jct, buildings, stops, lines, people,
     daysSurvived: g.daysSurvived, dayIncome: g.dayIncome, peak: g.peakTraffic, diff: g.diff,
     fin: { loan: g.loan, maint: g.maint, autoRenew: g.autoRenew, research: { ...g.research }, contracts: g.contracts.filter((c) => c.state === 'active' || c.state === 'offer'), done: g.contractsDone, ach: [...g.achieved], borrowed: g.everBorrowed },

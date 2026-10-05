@@ -1,10 +1,12 @@
 // The map: terrain height function (shared with the renderer), tile layers, districts.
 import { Noise2, mulberry32, smoothstep, clamp, type Rng } from './util.ts';
 
-export const N = 40;            // playable tiles per side
-export const DS = 10;           // district size in tiles
+export const N = 64;            // playable tiles per side
+export const DS = 16;           // district size in tiles
 export const DN = N / DS;       // districts per side (4)
 export const HALF = N / 2;      // world units from centre to edge of the playable square
+/** terrain scale against the original 40 tile map */
+export const SC = HALF / 20;
 export const WATER_LEVEL = -0.12;
 
 // directions: 0 E(+x) 1 S(+z) 2 W(-x) 3 N(-z)
@@ -47,26 +49,26 @@ export class Terrain {
     const ang = r() * Math.PI * 2;
     const dirx = Math.cos(ang), dirz = Math.sin(ang);
     const nx = -dirz, nz = dirx;
-    const offset = (r() < 0.5 ? -1 : 1) * (6.5 + r() * 4.5);
+    const offset = (r() < 0.5 ? -1 : 1) * (6.5 + r() * 4.5) * SC;
     const pts: [number, number][] = [];
     const width: number[] = [];
     const seg = 14;
-    const amp = 3.5 + r() * 2.5;
+    const amp = (3.5 + r() * 2.5) * SC;
     const ph = r() * 6.28;
     for (let i = 0; i <= seg; i++) {
-      const t = (i / seg - 0.5) * 120;
+      const t = (i / seg - 0.5) * 120 * SC;
       const bend = Math.sin(i * 0.9 + ph) * amp + Math.sin(i * 0.37 + ph * 2) * amp * 0.6;
       pts.push([dirx * t + nx * (offset + bend), dirz * t + nz * (offset + bend)]);
-      width.push(1.15 + 0.35 * Math.sin(i * 0.6 + ph) + 0.12 * i / seg);
+      width.push((1.15 + 0.35 * Math.sin(i * 0.6 + ph) + 0.12 * i / seg) * 1.25);
     }
     this.rivers.push({ pts, width });
     // a small lake on the other side of the centre
     const la = ang + Math.PI * (r() < 0.5 ? 0.5 : -0.5) + (r() - 0.5) * 0.6;
-    const dist = 8 + r() * 5;
-    this.lake = { x: Math.cos(la) * dist + nx * -offset * 0.4, z: Math.sin(la) * dist + nz * -offset * 0.4, rx: 2.6 + r() * 1.4, rz: 2.0 + r() * 1.2, rot: r() * 3 };
+    const dist = (8 + r() * 5) * SC;
+    this.lake = { x: Math.cos(la) * dist + nx * -offset * 0.4, z: Math.sin(la) * dist + nz * -offset * 0.4, rx: (2.6 + r() * 1.4) * 1.5, rz: (2.0 + r() * 1.2) * 1.5, rot: r() * 3 };
     // keep the lake out of the central 8x8
     const lk = this.lake;
-    if (Math.hypot(lk.x, lk.z) < 11) { const s = 11 / Math.max(0.1, Math.hypot(lk.x, lk.z)); lk.x *= s; lk.z *= s; }
+    if (Math.hypot(lk.x, lk.z) < 11 * SC) { const s = 11 * SC / Math.max(0.1, Math.hypot(lk.x, lk.z)); lk.x *= s; lk.z *= s; }
   }
 
   /** distance to the river and its half-width at the nearest point */
@@ -99,24 +101,24 @@ export class Terrain {
   /** island coast radius at an angle */
   coastR(x: number, z: number): number {
     const a = Math.atan2(z, x);
-    return 40 + 4.5 * this.noise.fbm(Math.cos(a) * 1.3 + 7, Math.sin(a) * 1.3 + 3, 3) + 2.5 * this.noise2.get(Math.cos(a) * 3.1, Math.sin(a) * 3.1);
+    return 40 * SC + 4.5 * SC * this.noise.fbm(Math.cos(a) * 1.3 + 7, Math.sin(a) * 1.3 + 3, 3) + 2.5 * SC * this.noise2.get(Math.cos(a) * 3.1, Math.sin(a) * 3.1);
   }
 
   /** terrain height in world units. 0 = flat building ground. */
   height(x: number, z: number): number {
     const sq = Math.max(Math.abs(x), Math.abs(z));
-    const flat = 1 - smoothstep(HALF + 0.5, HALF + 7, sq);
+    const flat = 1 - smoothstep(HALF + 0.5, HALF + 7 * SC, sq);
     // rolling hills + a couple of bigger ridges outside the playable square
-    const n = this.noise.fbm(x * 0.07 + 11, z * 0.07 + 5, 4) * 0.5 + 0.5;
-    const ridge = 1 - Math.abs(this.noise2.fbm(x * 0.045 + 3, z * 0.045 + 9, 3));
+    const n = this.noise.fbm(x * 0.07 / SC + 11, z * 0.07 / SC + 5, 4) * 0.5 + 0.5;
+    const ridge = 1 - Math.abs(this.noise2.fbm(x * 0.045 / SC + 3, z * 0.045 / SC + 9, 3));
     let h = (n * 2.6 + ridge * ridge * 3.4) * (1 - flat);
     // tiny undulation inside so the ground is not a perfect plane (under 0.02: invisible under buildings)
     h += flat * 0.0;
     // coast: slope down to the sea
     const r = Math.hypot(x, z);
     const cr = this.coastR(x, z);
-    const shore = smoothstep(cr - 9, cr + 1.5, r);
-    h = h * (1 - shore * 0.85) - shore * 2.4 - smoothstep(cr + 0, cr + 14, r) * 4;
+    const shore = smoothstep(cr - 9 * SC, cr + 1.5 * SC, r);
+    h = h * (1 - shore * 0.85) - shore * 2.4 - smoothstep(cr + 0, cr + 14 * SC, r) * 4;
     // beach plateau near the water line so the sand reads
     // rivers + lake carve
     const rf = this.riverField(x, z);
@@ -181,8 +183,8 @@ export class World {
       this.tree[i] = 0;
       // character maps
       const d = Math.hypot(cx - 1, cz - 1);
-      this.centre[i] = clamp(d / 22);
-      this.industrial[i] = clamp(0.5 * (t.noise2.fbm(cx * 0.09 + 20, cz * 0.09, 3) * 0.5 + 0.5) + 0.5 * smoothstep(8, 20, d));
+      this.centre[i] = clamp(d / (22 * SC));
+      this.industrial[i] = clamp(0.5 * (t.noise2.fbm(cx * 0.09 / SC + 20, cz * 0.09 / SC, 3) * 0.5 + 0.5) + 0.5 * smoothstep(8 * SC, 20 * SC, d));
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = tileIdx(x, y);
@@ -208,7 +210,7 @@ export class World {
       const ring = Math.max(Math.abs(col - 1.5), Math.abs(row - 1.5)); // 0.5 centre, 1.5 outer
       this.districts.push({ index: i, col, row, unlocked: false, cost: 0, landTiles: land });
       const corner = Math.abs(col - 1.5) > 1.4 && Math.abs(row - 1.5) > 1.4;
-      this.districts[i].cost = ring < 1 ? 0 : corner ? 7500 : 4500;
+      this.districts[i].cost = ring < 1 ? 0 : corner ? 9000 : 5500;
     }
     for (const c of [5, 6, 9, 10]) this.setUnlocked(c, true);
   }

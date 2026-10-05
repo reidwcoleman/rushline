@@ -14,7 +14,7 @@ export class CameraRig {
   gPitch = 0.92;
   gDist = 40;
   minDist = 7;
-  maxDist = 82;
+  maxDist = 130;
   shake = 0;
   private ray = new THREE.Raycaster();
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);

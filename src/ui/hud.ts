@@ -5,7 +5,7 @@ import { COST, GOALS, UNLOCK, SERVICE, LOTS, LOT_ORDER } from '../sim/game.ts';
 import { moodColorHex, fullName } from '../sim/people.ts';
 import { CARGO_INFO, CARGO_LIST, isIndustry, sellsIdx, FACILITY } from '../sim/industry.ts';
 import { DAY, hourOf, dayOf } from '../sim/types.ts';
-import { wx, wz, DS, DN } from '../sim/world.ts';
+import { wx, wz, DS, DN, HALF } from '../sim/world.ts';
 import { MODES, MODE_ORDER, CARGO_ORDER, type Mode } from '../sim/modes.ts';
 import type { App } from './app.ts';
 import { isRoadTool, type ToolId, type JMode } from './tools.ts';
@@ -672,7 +672,7 @@ export class Hud {
         if (c >= 0 && r >= 0 && c < DN && r < DN && w.districts[r * DN + c].unlocked) adj = true;
       }
       if (!adj) continue;
-      const cx = (d.col * DS + DS / 2) - 20 , cz = (d.row * DS + DS / 2) - 20;
+      const cx = (d.col * DS + DS / 2) - HALF, cz = (d.row * DS + DS / 2) - HALF;
       const p = rig.toScreen(this.tmpV.set(cx, 0.1, cz));
       if (!p.visible || p.x < 175 || p.x > innerWidth - 110 || p.y < 125 || p.y > innerHeight - 90 || (p.x > innerWidth - 340 && p.y < 170)) continue;
       shown.add(d.index);

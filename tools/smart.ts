@@ -13,12 +13,12 @@ const log: string[] = [];
 g.on('toast', (t: any) => log.push(`d${g.day} ${g.hour.toFixed(0)}h ${t.msg}`));
 
 // where the starting town sits
-let cx = 20, cy = 20;
+let cx = N / 2, cy = N / 2;
 for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const t = tileIdx(x, y); if (w.road[t] === 2 && w.road[tileIdx(x + 1, y)] === 2 && w.road[tileIdx(x, y + 1)] === 2 && w.road[tileIdx(x - 1, y)] === 2 && w.road[tileIdx(x, y - 1)] === 2) { cx = x; cy = y; } }
 const spacing = +(process.env.SPACING ?? 4);
 function gridStep() {
   const cand: { tiles: number[]; d: number }[] = [];
-  for (let k = -24; k <= 24; k += spacing) {
+  for (let k = -36; k <= 36; k += spacing) {
     const row: number[] = [], col: number[] = [];
     for (let i = 0; i < N; i++) {
       const y = cy + k, x = cx + k;
@@ -49,7 +49,7 @@ function lineAlong(horizontal: boolean, k: number, lo: number, hi: number, step 
 }
 function metroAcross(horizontal: boolean, k: number) {
   const tiles: number[] = [];
-  for (let i = 3; i <= 37; i += 6) tiles.push(horizontal ? tileIdx(i, cy + k) : tileIdx(cx + k, i));
+  for (let i = 3; i <= N - 3; i += 8) tiles.push(horizontal ? tileIdx(i, cy + k) : tileIdx(cx + k, i));
   const ok = tiles.filter((t) => w.isUnlocked(t) && !w.water[t] && w.bld[t] < 0 && w.stopKind[t] !== 1);
   if (ok.length >= 3) { const r = g.createMetroLine(ok); if (!r.ok) console.log('   metro fail', r.msg); }
 }
@@ -82,7 +82,7 @@ while (g.t < endT && !g.over) {
       if (g.transit.lines.filter((l) => l.kind === 'bus').length < Math.min(10, wantBus) && g.money > 900) {
         const ks = [0, 0, -4, -4, 4, 4, -8, 8, -12, 12];
         const n = g.transit.lines.filter((l) => l.kind === 'bus').length;
-        lineAlong(n % 2 === 0, ks[n % ks.length], 2, 38, 3);
+        lineAlong(n % 2 === 0, ks[n % ks.length], 2, N - 2, 3);
       }
     }
     // service levels
@@ -111,7 +111,7 @@ while (g.t < endT && !g.over) {
 }
 if (process.env.DUMP) {
   console.log('hour', g.hour.toFixed(1), 'veh', g.traffic.vehicles.length, 'pending', g.traffic.pending.length);
-  for (let y = 4; y < 36; y++) { let row = ''; for (let x = 4; x < 36; x++) { const i = tileIdx(x, y); if (!w.road[i]) { row += w.water[i] ? '~' : w.bld[i] >= 0 ? '.' : ' '; continue; } const n = g.traffic.tileCars[i].length; row += n === 0 ? (w.road[i] === 2 ? '=' : '-') : n > 9 ? '#' : String(n); } console.log(row); }
+  for (let y = 4; y < N - 4; y++) { let row = ''; for (let x = 4; x < N - 4; x++) { const i = tileIdx(x, y); if (!w.road[i]) { row += w.water[i] ? '~' : w.bld[i] >= 0 ? '.' : ' '; continue; } const n = g.traffic.tileCars[i].length; row += n === 0 ? (w.road[i] === 2 ? '=' : '-') : n > 9 ? '#' : String(n); } console.log(row); }
   const po: Record<number, number> = {}; for (const v of g.traffic.pending) po[v.path[0]] = (po[v.path[0]] || 0) + 1;
   console.log('pending origins', Object.entries(po).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([t, n]) => `${(+t) % N},${Math.floor((+t) / N)}:${n}`).join(' '));
 }

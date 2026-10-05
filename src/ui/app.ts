@@ -1,6 +1,7 @@
 // App shell: screens (title, pause, game over), coach, saving, and the per-frame glue between game, view and UI.
 import { Game, serialize, GOALS } from '../sim/game.ts';
 import { DAY, hourOf } from '../sim/types.ts';
+import { N, HALF } from '../sim/world.ts';
 import { View } from '../render/view.ts';
 import { Sound } from '../audio/audio.ts';
 import { h, icon, money, fmt } from './dom.ts';
@@ -14,8 +15,9 @@ import type { Quality } from '../render/renderer.ts';
 const SAVE_KEY = 'rushline.save.v1';
 const PREF_KEY = 'rushline.prefs.v1';
 
-export const hasSave = () => { try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; } };
-export const loadSave = () => { try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s) : null; } catch { return null; } };
+// a save from a map of another size cannot be loaded (tile numbers differ)
+export const loadSave = () => { try { const s = localStorage.getItem(SAVE_KEY); const d = s ? JSON.parse(s) : null; return d && d.n === N ? d : null; } catch { return null; } };
+export const hasSave = () => !!loadSave();
 
 interface Coach { id: string; title: string; text: string; done: () => boolean; after?: number }
 
@@ -119,7 +121,7 @@ export class App {
   focusCity() {
     const g = this.game;
     let x = 0, z = 0, n = 0;
-    for (const b of g.city.buildings.values()) { x += b.x - 20 + 0.5; z += b.y - 20 + 0.5; n++; }
+    for (const b of g.city.buildings.values()) { x += b.x - HALF + 0.5; z += b.y - HALF + 0.5; n++; }
     if (n) { x /= n; z /= n; }
     const r = this.view.rig;
     r.gTarget.set(x, 0, z);
@@ -182,7 +184,7 @@ export class App {
       let best = -1, bs = 0;
       for (let i = 0; i < g.traffic.tileCars.length; i++) { const n = g.traffic.tileCars[i].length; if (n < 2) continue; const sc = n * (1.2 - g.traffic.cong[i]); if (sc > bs) { bs = sc; best = i; } }
       if (best < 0) { this.toast('No traffic trouble right now.', 'good'); return; }
-      r.focus((best % 40) - 20 + 0.5, Math.floor(best / 40) - 20 + 0.5, 20);
+      r.focus((best % N) - HALF + 0.5, Math.floor(best / N) - HALF + 0.5, 20);
       this.hud.setOverlay('traffic', true);
       this.tools.setSelection({ type: 'road', tile: best });
     } else if (kind === 'transit') {
@@ -195,7 +197,7 @@ export class App {
       let best: any = null, bs = 0.62;
       for (const b of g.city.buildings.values()) if (b.kind === 'res' && b.residents.length > 2 && b.happy < bs) { bs = b.happy; best = b; }
       if (!best) { this.toast('Residents are content.', 'good'); return; }
-      r.focus(best.x - 20 + 0.5, best.y - 20 + 0.5, 16);
+      r.focus(best.x - HALF + 0.5, best.y - HALF + 0.5, 16);
       this.hud.setOverlay('happy', true);
       this.tools.setSelection({ type: 'building', id: best.id });
     }

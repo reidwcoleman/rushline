@@ -688,7 +688,7 @@ export class City {
   spawnIndustries(cx: number, cy: number) {
     const w = this.w;
     const wants: { kind: 'farm' | 'quarry' | 'factory' | 'terminal'; ax: number; ay: number }[] = [
-      { kind: 'farm', ax: cx + 7, ay: cy }, { kind: 'quarry', ax: cx - 7, ay: cy }, { kind: 'factory', ax: cx, ay: cy + 7 }, { kind: 'terminal', ax: cx, ay: cy - 7 },
+      { kind: 'farm', ax: cx + 9, ay: cy }, { kind: 'quarry', ax: cx - 9, ay: cy }, { kind: 'factory', ax: cx, ay: cy + 9 }, { kind: 'terminal', ax: cx, ay: cy - 9 },
     ];
     for (const wnt of wants) {
       let best = -1, bd = 99;

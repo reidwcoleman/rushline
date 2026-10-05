@@ -1,6 +1,6 @@
 // Test helpers (not used by normal play): grow a showcase city quickly.
 import type { Game } from './sim/game.ts';
-import { N, tileIdx } from './sim/world.ts';
+import { N, HALF, tileIdx } from './sim/world.ts';
 import { DAY } from './sim/types.ts';
 
 export function growDemo(g: Game, days = 6, withMetro = true) {
@@ -8,10 +8,10 @@ export function growDemo(g: Game, days = 6, withMetro = true) {
   g.money = 400000;
   for (const d of w.districts) if (!d.unlocked) g.unlockDistrict(d.index);
   let next = g.t;
-  const cx = 20, cy = 20;
+  const cx = HALF, cy = HALF;
   const gridStep = () => {
     const cand: { tiles: number[]; d: number }[] = [];
-    for (let k = -20; k <= 20; k += 4) {
+    for (let k = -HALF; k <= HALF; k += 4) {
       const row: number[] = [], col: number[] = [];
       for (let i = 0; i < N; i++) {
         const rt = tileIdx(i, cy + k), ct = tileIdx(cx + k, i);
@@ -98,8 +98,8 @@ export function addFreight(g: Game) {
   const near = (b: { x: number; y: number }, mode: 'truck' | 'freight') => {
     let best = -1, bd = 99;
     for (let y = b.y - 3; y <= b.y + 3; y++) for (let x = b.x - 3; x <= b.x + 3; x++) {
-      if (x < 0 || y < 0 || x >= 40 || y >= 40) continue;
-      const t = y * 40 + x;
+      if (x < 0 || y < 0 || x >= N || y >= N) continue;
+      const t = y * N + x;
       if (g.spotCheck(mode, t)) continue;
       if (mode === 'truck' && g.roadDegree(t) >= 3) continue;
       const d = Math.hypot(x - b.x, y - b.y);
@@ -126,7 +126,7 @@ export function addAirport(g: Game) {
   g.money = Math.max(g.money, 200000);
   g.unlocked.airport = true;
   for (const d of g.world.districts) if (!d.unlocked) g.unlockDistrict(d.index);
-  for (let i = 0; i < 1600; i++) {
+  for (let i = 0; i < N * N; i++) {
     const pl = g.planAirport(i);
     if (pl.ok) { const r = g.placeService('airport', i); if (r.ok) return { at: i, rot: pl.rot }; }
   }
@@ -158,7 +158,7 @@ export function addHighway(g: Game) {
   const r = g.buildRoad(best, 3);
   const mid = best[Math.floor(best.length / 2)];
   g.setJunction(mid, 'ramp');
-  const jn = [...Array(N * N).keys()].filter((i) => w.surf(i) && w.degree(i) >= 3).sort((a, b) => Math.hypot((a % N) - 20, ((a / N) | 0) - 20) - Math.hypot((b % N) - 20, ((b / N) | 0) - 20));
+  const jn = [...Array(N * N).keys()].filter((i) => w.surf(i) && w.degree(i) >= 3).sort((a, b) => Math.hypot((a % N) - HALF, ((a / N) | 0) - HALF) - Math.hypot((b % N) - HALF, ((b / N) | 0) - HALF));
   const rab = jn[3] ?? -1, sig = jn[7] ?? -1;
   if (rab >= 0) g.setJunction(rab, 2);
   if (sig >= 0) g.setJunction(sig, 1);

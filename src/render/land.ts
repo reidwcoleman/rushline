@@ -2,10 +2,10 @@
 import * as THREE from 'three';
 import { U, patch, GLSL } from './gfx.ts';
 import { Noise2, smoothstep, clamp, lerp } from '../sim/util.ts';
-import { World, N, HALF, WATER_LEVEL, DN, DS } from '../sim/world.ts';
+import { World, N, HALF, SC, WATER_LEVEL, DN, DS } from '../sim/world.ts';
 
-export const EXT = 56;          // half-size of the terrain mesh in world units
-const SEG = 224;
+export const EXT = 56 * SC;          // half-size of the terrain mesh in world units
+const SEG = 336;
 
 const col = (hex: number) => new THREE.Color(hex);
 
@@ -88,7 +88,7 @@ export class Land {
     scene.add(this.mesh);
 
     // ----- water
-    const dN = 256;
+    const dN = 384;
     const depth = new Uint8Array(dN * dN);
     for (let j = 0; j < dN; j++) for (let i = 0; i < dN; i++) {
       const x = -EXT + ((i + 0.5) / dN) * EXT * 2, z = -EXT + ((j + 0.5) / dN) * EXT * 2;
@@ -310,7 +310,7 @@ export class TimeOfDay {
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(4096, 4096);
     const sc = this.sun.shadow.camera;
-    sc.left = -34; sc.right = 34; sc.top = 34; sc.bottom = -34; sc.near = 1; sc.far = 160;
+    sc.left = -48; sc.right = 48; sc.top = 48; sc.bottom = -48; sc.near = 1; sc.far = 220;
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.02;
     this.sun.shadow.radius = 3;

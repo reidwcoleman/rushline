@@ -3,7 +3,7 @@
 import type { Game, Cmd } from './game.ts';
 import { COST } from './game.ts';
 import { MODES, MODE_ORDER, type Mode } from './modes.ts';
-import { N, tileIdx, tileX, tileY, wx, wz } from './world.ts';
+import { N, HALF, tileIdx, tileX, tileY, wx, wz } from './world.ts';
 import type { Line, Stop, Building } from './types.ts';
 import { CARGO_INFO, CARGO_LIST, FACILITY, isIndustry, room, CATCH } from './industry.ts';
 
@@ -39,7 +39,7 @@ export function suggestLine(g: Game, mode: Mode, tries = 8): number[][] {
     const cx = wx(tileX(t)), cz = wz(tileY(t));
     let hs = 0, js = 0;
     for (const b of blds) {
-      const dx = b.x + 0.5 - 20 - cx, dz = b.y + 0.5 - 20 - cz;
+      const dx = b.x + 0.5 - HALF - cx, dz = b.y + 0.5 - HALF - cz;
       if (dx * dx + dz * dz > R * R) continue;
       if (b.kind === 'res') hs += b.residents.length * (1 - g.transit.coverage(b.x, b.y) * 0.85);
       else js += b.cap * (b.special === 'arena' ? 2 : 1);

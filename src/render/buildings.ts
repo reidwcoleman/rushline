@@ -4,7 +4,7 @@ import { MeshBuilder, patch, lin, mix3, shade3, instAttr, tmpObj, U } from './gf
 import { mulberry32 } from '../sim/util.ts';
 import { VARIANTS } from '../sim/city.ts';
 import type { Kind, Building } from '../sim/types.ts';
-import { wx, wz } from '../sim/world.ts';
+import { wx, wz, N } from '../sim/world.ts';
 
 type RGB = number[];
 type Win = [number, number, number, number];
@@ -815,7 +815,7 @@ export const faceAngle = (rot: number) => [Math.PI / 2, 0, -Math.PI / 2, Math.PI
 export function footCenter(b: Building): { x: number; z: number } {
   if (!b.foot.length) return { x: wx(b.x), z: wz(b.y) };
   let sx = 0, sz = 0;
-  for (const t of b.foot) { sx += wx(t % 40); sz += wz(Math.floor(t / 40)); }
+  for (const t of b.foot) { sx += wx(t % N); sz += wz(Math.floor(t / N)); }
   return { x: sx / b.foot.length, z: sz / b.foot.length };
 }
 

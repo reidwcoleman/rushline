@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { MeshBuilder, patch, lin, instAttr, tmpObj, U } from './gfx.ts';
 import { mulberry32 } from '../sim/util.ts';
-import { World, N, HALF, tileIdx, wx, wz, WATER_LEVEL, DX, DY, inMap } from '../sim/world.ts';
+import { World, N, HALF, SC, tileIdx, wx, wz, WATER_LEVEL, DX, DY, inMap } from '../sim/world.ts';
 
 function pineGeo() {
   const b = new MeshBuilder();
@@ -203,4 +203,4 @@ export class Props {
   }
 }
 
-const EXT_T = 52;
+const EXT_T = 52 * SC;

@@ -1,5 +1,6 @@
 // Shared render plumbing: uniforms, shader patches, a tiny geometry builder, palette helpers.
 import * as THREE from 'three';
+import { N, HALF } from '../sim/world.ts';
 
 export const U = {
   uTime: { value: 0 },
@@ -116,7 +117,7 @@ if (vWin.x > 0.0) {
     if (o.lock) {
       fs = fs.replace('#include <color_fragment>', `#include <color_fragment>
 {
-  vec2 luv = (vWPos.xz + 20.0) / 40.0;
+  vec2 luv = (vWPos.xz + ${HALF.toFixed(1)}) / ${N.toFixed(1)};
   float inside = step(0.0, luv.x) * step(luv.x, 1.0) * step(0.0, luv.y) * step(luv.y, 1.0);
   float lk = texture2D(uLockTex, luv).r * inside;
   float edge = 1.0 - abs(lk * 2.0 - 1.0);

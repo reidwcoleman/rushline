@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { MeshBuilder, patch, lin, shade3, mix3, instAttr, tmpObj, U } from './gfx.ts';
 import { smoothTilePath } from '../sim/path.ts';
-import { wx, wz, tileX, tileY, DX, DY, N, inMap, tileIdx, WATER_LEVEL, type World } from '../sim/world.ts';
+import { wx, wz, tileX, tileY, DX, DY, N, HALF, inMap, tileIdx, WATER_LEVEL, type World } from '../sim/world.ts';
 import { MODES, isSolidCode } from '../sim/modes.ts';
 import type { Transit } from '../sim/transit.ts';
 import type { Line, Stop } from '../sim/types.ts';
@@ -252,7 +252,7 @@ function tramTrack(line: Line, world: World): THREE.BufferGeometry {
   const L = poly.length;
   const samples: { x: number; z: number; ang: number; dy: number }[] = [];
   const tmp = { x: 0, z: 0, ang: 0 };
-  const dyAt = (x: number, z: number) => { const tx = Math.floor(x + 20), ty = Math.floor(z + 20); return tx >= 0 && ty >= 0 && tx < N && ty < N && world.water[tileIdx(tx, ty)] === 1 ? 0.022 : 0; };
+  const dyAt = (x: number, z: number) => { const tx = Math.floor(x + HALF), ty = Math.floor(z + HALF); return tx >= 0 && ty >= 0 && tx < N && ty < N && world.water[tileIdx(tx, ty)] === 1 ? 0.022 : 0; };
   for (let d = 0; d <= L + 1e-6; d += 0.1) { poly.at(Math.min(d, L), 0, tmp); samples.push({ ...tmp, dy: dyAt(tmp.x, tmp.z) }); }
   poly.at(L, 0, tmp);
   samples.push({ ...tmp, dy: dyAt(tmp.x, tmp.z) });
@@ -511,7 +511,7 @@ export class TransitGfx {
           const dd = nominal + o;
           if (dd < d0 + 1.3 || dd > d1 - 1.3) continue;
           poly.at(dd, 0, tmp);
-          const tx = Math.floor(tmp.x + 20), ty = Math.floor(tmp.z + 20);
+          const tx = Math.floor(tmp.x + HALF), ty = Math.floor(tmp.z + HALF);
           const idx = tx >= 0 && ty >= 0 && tx < N && ty < N ? tileIdx(tx, ty) : -1;
           const penalty = idx >= 0 ? (this.world.bld[idx] >= 0 ? 10 : this.world.road[idx] ? 1.5 : this.world.water[idx] ? 2 : 0) : 5;
           const score = penalty + Math.abs(o) * 0.1;
@@ -594,7 +594,7 @@ export class TransitGfx {
     for (const nd of nodes) {
       if (nd.fixed) continue;
       poly.at(nd.d, 0, tmp);
-      const tx = Math.floor(tmp.x + 20), ty = Math.floor(tmp.z + 20);
+      const tx = Math.floor(tmp.x + HALF), ty = Math.floor(tmp.z + HALF);
       const wet = tx >= 0 && ty >= 0 && tx < N && ty < N && this.world.water[tileIdx(tx, ty)] === 1;
       geos.push(...pylonGeo(tmp.x, tmp.z, tmp.ang, nd.y - 0.008, wet ? -0.5 : 0.004, line.color));
     }
