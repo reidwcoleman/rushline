@@ -9,6 +9,7 @@ import {
 } from './people.ts';
 import type { Cargo } from './types.ts';
 import { Social } from './social.ts';
+import { SKILL_IDS, SKILL_INFO, TRAIN_RATE, MAX_SKILL, skillLevel, ASPIRATIONS, aspirationOf, pickAspiration, type SkillId } from './skills.ts';
 import { SPEED_STREET } from './path.ts';
 import { WALK_SPEED } from './transit.ts';
 import type { Traffic } from './traffic.ts';
@@ -235,7 +236,9 @@ export class City {
       first: spec.first ?? firstName(r), last: hh.last, age, stage, hh, traits, needs: freshNeeds(r), mood: 0.7, look: rollLook(r),
       title: '', wage: 0, xp: stage === 'adult' ? Math.floor(r() * 10) : 0, wallet: 20 + Math.floor(r() * 120), friends: [], log: [], ride: null, walk: null,
       student: false, thought: '', born: this.ctx.t, car: null, orders: [], partner: 0, bond: 0, since: 0, buffs: [], wish: null,
+      skills: [0, 0, 0, 0, 0], aspire: '', aspDone: false,
     };
+    if (stage === 'adult' || stage === 'senior') for (let k = 0; k < 5; k++) p.skills[k] = r() < 0.5 ? Math.round(r() * 3 * 10) / 10 : 0;
     if (has(p, 'driver')) p.carBias *= 0.82;
     if (has(p, 'green')) p.carBias *= 1.25;
     if (has(p, 'sporty')) p.carBias *= 1.08;
@@ -453,7 +456,7 @@ export class City {
         if (this.rain) trCost *= 0.92;
       }
     }
-    const walkCost = dist <= 6.5 ? (dist / WALK_SPEED) * 1.1 : Infinity;
+    const walkCost = dist <= 8 ? (dist / WALK_SPEED) * 1.1 : Infinity;
     let mode: 1 | 2 | 3 | 4 = 4;
     if (carCost <= trCost && carCost <= walkCost && carCost < Infinity) mode = 1;
     else if (trCost <= walkCost && trCost < Infinity) mode = 2;
@@ -652,7 +655,7 @@ export class City {
     // meet people
     if (b.guests.length > 1 && p.friends.length < 5) {
       const o = b.guests[Math.floor(this.ctx.rand() * (b.guests.length - 1))];
-      if (o !== p && !o.dead && !p.friends.includes(o.id) && o.friends.length < 5 && this.ctx.rand() < (has(p, 'social') ? 0.3 : 0.1) * (has(p, 'home') ? 0.5 : 1)) {
+      if (o !== p && !o.dead && !p.friends.includes(o.id) && o.friends.length < 5 && this.ctx.rand() < (has(p, 'social') ? 0.3 : 0.1) * (has(p, 'home') ? 0.5 : 1) * (1 + 0.07 * skillLevel(p, 'charisma'))) {
         p.friends.push(o.id); o.friends.push(p.id);
         logLife(p, this.ctx.t, `Made a friend: ${fullName(o)}, at ${b.name}.`);
         logLife(o, this.ctx.t, `Made a friend: ${fullName(p)}, at ${b.name}.`);
@@ -778,6 +781,51 @@ export class City {
     return hour >= 23 || hour < 6.3;
   }
 
+  /** skills grow with whatever they have been doing */
+  private practise(p: Person, hrs: number, a: { atHome: boolean; meal: boolean; working: boolean; party: boolean; visiting: boolean; venue: Venue | null; sleeping: boolean }) {
+    if (p.stage === 'child' && p.age < 5) return;
+    const gain = (s: SkillId, k: number) => {
+      const i = SKILL_IDS.indexOf(s), before = p.skills[i];
+      if (before >= MAX_SKILL) return;
+      p.skills[i] = Math.min(MAX_SKILL, before + k * TRAIN_RATE * hrs);
+      const lvl = Math.floor(p.skills[i]);
+      if (lvl > Math.floor(before)) this.leveled(p, s, lvl);
+    };
+    if (a.sleeping) return;
+    if (a.atHome && a.meal) gain('cooking', has(p, 'foodie') ? 1.5 : 1);
+    if (a.atHome && !a.meal && p.needs.fun < 0.8) gain('creativity', 0.18);
+    if (a.venue === 'gym') gain('fitness', has(p, 'sporty') ? 3 : 2.2);
+    if (a.working && p.work && (p.work.venue === 'office' || p.work.special === 'school' || p.work.special === 'clinic')) gain('logic', has(p, 'driven') ? 0.7 : 0.45);
+    if (p.student) gain('logic', 0.6);
+    if (a.party) gain('charisma', 1.4);
+    if (a.venue === 'bar' || a.venue === 'cafe' || a.venue === 'mall' || a.visiting) gain('charisma', has(p, 'social') ? 0.9 : 0.55);
+    if (a.venue === 'cinema' || a.venue === 'bar' || a.venue === 'cafe') gain('creativity', 0.6);
+  }
+  private leveled(p: Person, s: SkillId, lvl: number) {
+    const t = this.ctx.t, info = SKILL_INFO[s];
+    logLife(p, t, `${info.label} reached level ${lvl}.`);
+    if (lvl === 5 || lvl === 10) this.pushFeed(p, `${fullName(p)} reached ${info.label.toLowerCase()} level ${lvl}.`, 'good', 'skill', 8);
+    this.social.grant(p, 'skill');
+    if (lvl === 10) this.skillMasters++;
+  }
+  skillMasters = 0;
+  aspirationsDone = 0;
+
+  /** once a day: give grown-ups a lifetime aspiration and see if anyone has fulfilled theirs */
+  private aspire(p: Person) {
+    if (p.age < 18 || p.dead) return;
+    if (!p.aspire) { p.aspire = pickAspiration(p, this.ctx.rand); return; }
+    if (p.aspDone) return;
+    const a = aspirationOf(p);
+    if (!a || a.progress(p) < 1) return;
+    p.aspDone = true;
+    this.aspirationsDone++;
+    p.wallet += 400;
+    this.social.addBuff(p, 'aspire', `Fulfilled: ${a.label.toLowerCase()}`, 0.1, 6);
+    logLife(p, this.ctx.t, `Achieved a lifetime aspiration: ${a.label}.`);
+    this.pushFeed(p, `${fullName(p)} achieved their lifetime aspiration: ${a.label.toLowerCase()}.`, 'good', 'aspire', 14);
+  }
+
   /** one second of sim time of needs for everyone: hunger, energy, fun, social, comfort */
   private updateNeeds(dt: number) {
     const hrs = dt / (DAY / 24), hour = hourOf(this.ctx.t);
@@ -795,17 +843,17 @@ export class City {
       const visiting = idle && p.state === 'leisure' && !!p.at && p.at.kind === 'res';
       const working = idle && p.state === 'work' && p.at === p.work;
       // energy
-      n.energy += (sleeping ? 0.22 : -0.034) * hrs;
+      n.energy += (sleeping ? 0.22 : -0.034 * (1 - 0.025 * skillLevel(p, 'fitness'))) * hrs;
       // hunger
       let hg = sleeping ? -0.02 : has(p, 'foodie') ? -0.09 : -0.07;
-      if (atHome && meal && !sleeping) hg += 0.95;
+      if (atHome && meal && !sleeping) hg += 0.95 * (1 + 0.03 * skillLevel(p, 'cooking'));
       else if (working && lunch) hg += 0.62;
       else if (v) hg += v.hunger;
       if (party) hg += 0.4;
       n.hunger += hg * hrs;
       // fun
       let fn = sleeping ? -0.005 : -0.032;
-      if (atHome && !sleeping) fn += 0.03 * (1 + 1.5 * p.home.park);
+      if (atHome && !sleeping) fn += 0.03 * (1 + 1.5 * p.home.park) * (1 + 0.1 * skillLevel(p, 'creativity'));
       if (v) fn += v.fun + (has(p, 'foodie') ? v.hunger * 0.15 : 0);
       else if (visiting) fn += 0.22;
       if (party) fn += 0.7;
@@ -822,7 +870,16 @@ export class City {
       const school = p.stage === 'child' || p.stage === 'teen' ? 0 : 0;
       const target = 0.4 + 0.42 * p.home.land + 0.2 * p.sat - 0.16 * this.stats.smog - (p.wallet < 0 ? 0.15 : 0) + 0.06 * p.home.clinic * (p.stage === 'senior' ? 2 : 1) + school;
       n.comfort += (clamp(target) - n.comfort) * Math.min(1, 0.15 * hrs);
-      n.energy = clamp(n.energy); n.hunger = clamp(n.hunger); n.fun = clamp(n.fun); n.social = clamp(n.social); n.comfort = clamp(n.comfort);
+      // the bathroom: bladder empties all day and refills at home, at work and in any venue; a wash at home
+      let bl = sleeping ? -0.03 : -0.085;
+      if (atHome && !sleeping) bl = 1.6; else if (working) bl = 0.42; else if (v || visiting || party) bl = 0.55;
+      n.bladder += bl * hrs;
+      let hy = sleeping ? -0.012 : -0.05;
+      if (atHome && !sleeping) hy = (hour >= 5.5 && hour < 9.5 ? 1.15 : 0.5);
+      else if (v && p.at?.venue === 'gym') hy = 0.3;
+      n.hygiene += hy * hrs;
+      this.practise(p, hrs, { atHome, meal, working, party, visiting, venue: v ? p.at?.venue ?? null : null, sleeping });
+      n.energy = clamp(n.energy); n.hunger = clamp(n.hunger); n.fun = clamp(n.fun); n.social = clamp(n.social); n.comfort = clamp(n.comfort); n.hygiene = clamp(n.hygiene); n.bladder = clamp(n.bladder);
       p.mood = clamp(moodOf(p) + this.social.buffSum(p));
     }
   }
@@ -839,7 +896,7 @@ export class City {
         const worked = p.work && !p.student && p.workDay >= day - 1;
         if (worked) {
           p.wallet += p.wage;
-          p.xp += has(p, 'driven') ? 1.4 : 1;
+          p.xp += (has(p, 'driven') ? 1.4 : 1) * (1 + 0.04 * skillLevel(p, 'logic'));
           const j = jobFor(p.work!, p.xp, p);
           if (j.title !== p.title) {
             const was = p.title;
@@ -852,6 +909,7 @@ export class City {
       p.wallet = clamp(p.wallet, -80, 9999);
       if (p.wallet < 0 && p.wallet > -9 && r() < 0.3) logLife(p, t, 'Money is tight.');
       if ((day + p.id) % 3 === 0) this.birthday(p);
+      this.aspire(p);
     }
     // jobless adults look again, pupils find places
     for (const p of this.persons) if (!p.work) this.occupy(p);
@@ -861,7 +919,7 @@ export class City {
       if (!p.work || p.student || p.friends.length >= 5) continue;
       const mates = p.work.workers;
       const o = mates[Math.floor(r() * mates.length)];
-      if (o && o !== p && !p.friends.includes(o.id) && o.friends.length < 5 && r() < 0.35) {
+      if (o && o !== p && !p.friends.includes(o.id) && o.friends.length < 5 && r() < 0.35 * (1 + 0.07 * skillLevel(p, 'charisma'))) {
         p.friends.push(o.id); o.friends.push(p.id);
         logLife(p, t, `Became friends with ${fullName(o)} from work.`);
         logLife(o, t, `Became friends with ${fullName(p)} from work.`);
@@ -1063,8 +1121,10 @@ export class City {
     let pop = 0, employed = 0, jobs = 0, housing = 0, comJ = 0, indJ = 0, satSum = 0, moodSum = 0;
     let adults = 0, kids = 0, seniors = 0, pupils = 0, schools = 0, clinics = 0;
     s.levels = [0, 0, 0];
+    let sx = 0, sy = 0;
     for (const b of this.buildings.values()) {
       s.levels[b.level - 1]++;
+      sx += b.x; sy += b.y;
       if (b.kind === 'res') {
         housing += b.cap;
         let sat = 0;
@@ -1084,6 +1144,7 @@ export class City {
       if (p.stage === 'adult') adults++; else if (p.stage === 'senior') seniors++; else kids++;
       if (p.student) pupils++;
     }
+    if (this.buildings.size) { this.cityX = sx / this.buildings.size; this.cityY = sy / this.buildings.size; }
     s.pop = pop; s.employed = employed; s.unemployed = Math.max(0, adults - employed);
     s.adults = adults; s.kids = kids; s.seniors = seniors; s.pupils = pupils; s.schools = schools; s.clinics = clinics;
     s.jobs = jobs; s.housing = housing; s.buildings = this.buildings.size;
@@ -1170,6 +1231,8 @@ export class City {
     return (0.45 + 0.55 * sat) * (0.4 + 0.6 * stab);
   }
 
+  /** where the built-up part of the city is centred, refreshed with the stats */
+  cityX = N / 2; cityY = N / 2;
   private spawnBuilding() {
     const s = this.stats;
     const cand = this.candidates();
@@ -1196,6 +1259,9 @@ export class City {
       else if (kind === 'com') f = 0.3 + (1 - smoothstep(0.1, 0.7, c)) * 1.2 + rd * 0.12;
       else f = 0.2 + ind * 1.3 + smoothstep(0.35, 0.9, c) * 0.5;
       f *= 0.55 + nb * 0.25 + this.ctx.rand() * 0.5;
+      // a city grows outward from where it already is, so trips stay short
+      const far = Math.hypot(x - this.cityX, y - this.cityY);
+      f /= 1 + (far / 24) * (far / 24);
       if (f > bestS) { bestS = f; bestI = i; }
     }
     if (bestI < 0) return;

@@ -53,7 +53,7 @@ const spots = await page.evaluate(() => {
   const g = __game;
   const farm = g.city.cargoSites().find((b) => b.special === 'farm');
   const term = g.city.cargoSites().find((b) => b.special === 'terminal');
-  const near = (b) => { let best = -1, bd = 99; for (let y = b.y - 3; y <= b.y + 3; y++) for (let x = b.x - 3; x <= b.x + 3; x++) { const t = y * 40 + x; if (x < 0 || y < 0 || x > 39 || y > 39) continue; if (g.spotCheck('truck', t)) continue; if (g.roadDegree(t) >= 3) continue; const d = Math.hypot(x - b.x, y - b.y); if (d < bd) { bd = d; best = t; } } return best; };
+  const near = (b) => { let best = -1, bd = 99; for (let y = b.y - 3; y <= b.y + 3; y++) for (let x = b.x - 3; x <= b.x + 3; x++) { const t = y * 64 + x; if (x < 0 || y < 0 || x > 63 || y > 63) continue; if (g.spotCheck('truck', t)) continue; if (g.roadDegree(t) >= 3) continue; const d = Math.hypot(x - b.x, y - b.y); if (d < bd) { bd = d; best = t; } } return best; };
   return [near(farm), near(term)];
 });
 await page.keyboard.press('4'); await page.waitForTimeout(100);
@@ -61,26 +61,28 @@ const grp = await page.$$('.grpseg .tab');
 await grp[1].click(); await page.waitForTimeout(100);
 const chips = await page.$$('.mode-row .mchip');
 ok('freight chips shown', chips.length === 2, String(chips.length));
+for (const c of chips) if (/truck/i.test(await c.textContent())) await c.click();
+await page.waitForTimeout(100);
 const pts = [];
-for (const t of spots) pts.push(await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), t));
+for (const t of spots) pts.push(await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), t));
 // each click needs the camera to see the tile; frame both
-await page.evaluate((t) => { const [a, b] = t; __cam(((a % 40) + (b % 40)) / 2 - 20 + 0.5, (Math.floor(a / 40) + Math.floor(b / 40)) / 2 - 20 + 0.5, 22, 0.7, 0.9); __pump(5); }, spots);
+await page.evaluate((t) => { const [a, b] = t; __cam(((a % 64) + (b % 64)) / 2 - 32 + 0.5, (Math.floor(a / 64) + Math.floor(b / 64)) / 2 - 32 + 0.5, 46, 0.7, 0.9); __pump(5); }, spots);
 const pts2 = [];
-for (const t of spots) pts2.push(await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), t));
+for (const t of spots) pts2.push(await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), t));
 for (const p of pts2) { await page.mouse.click(p[0], p[1]); await page.waitForTimeout(120); }
 await page.keyboard.press('Enter'); await page.waitForTimeout(150);
 const made = await page.evaluate(() => __game.transit.lines.filter((l) => l.kind === 'truck').length);
 ok('truck line built with clicks', made >= 1, String(made));
-await page.evaluate(() => { __game.transit.lines.filter((l) => l.kind === 'truck').forEach((l) => { __game.addVehicle(l); }); __pump(900); });
+await page.evaluate(() => { __game.transit.lines.filter((l) => l.kind === 'truck').forEach((l) => { __game.addVehicle(l); }); __pump(2400); });
 const hauled = await page.evaluate(() => __game.transit.lines.filter((l) => l.kind === 'truck').reduce((a, l) => a + l.hauled, 0));
 ok('trucks hauled cargo', hauled > 0, hauled.toFixed(0));
 
 // 4. school via the service tool
 await page.evaluate(() => __app.tools.select('inspect'));
 await page.keyboard.press('8'); await page.waitForTimeout(100);
-const empties = await page.evaluate(() => { const g = __game, w = g.world; for (let i = 0; i < 1600; i++) { if (w.isUnlocked(i) && !w.water[i] && w.isEmpty(i) && !w.rail[i] && g.city.roadFor({ x: i % 40, y: Math.floor(i / 40) }).tile >= 0) return i; } return -1; });
-await page.evaluate((t) => { __cam((t % 40) - 20 + 0.5, Math.floor(t / 40) - 20 + 0.5, 16, 0.7, 0.9); __pump(4); }, empties);
-const sp = await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), empties);
+const empties = await page.evaluate(() => { const g = __game, w = g.world; const order = [...Array(4096).keys()].sort((a, b) => Math.hypot((a % 64) - 32, ((a / 64) | 0) - 32) - Math.hypot((b % 64) - 32, ((b / 64) | 0) - 32)); for (const i of order) { if (w.isUnlocked(i) && !w.water[i] && w.isEmpty(i) && !w.rail[i] && g.city.roadFor({ x: i % 64, y: Math.floor(i / 64) }).tile >= 0) return i; } return -1; });
+await page.evaluate((t) => { __cam((t % 64) - 32 + 0.5, Math.floor(t / 64) - 32 + 0.5, 16, 0.7, 0.9); __pump(4); }, empties);
+const sp = await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), empties);
 await page.mouse.click(sp[0], sp[1]); await page.waitForTimeout(150);
 ok('school built', await page.evaluate(() => [...__game.city.buildings.values()].some((b) => b.special === 'school')));
 await page.evaluate(() => { __pump(600); });

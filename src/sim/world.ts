@@ -26,6 +26,20 @@ export const distIdx = (i: number) => {
   return dy * DN + dx;
 };
 
+const NAME_A = ['Maple', 'Harbor', 'Cedar', 'Willow', 'Copper', 'Briar', 'Fern', 'Gull', 'Lantern', 'Orchard', 'Heron', 'Larkspur', 'Amber', 'Foxglove', 'Birch', 'Marlow', 'Saltmarsh', 'Pennant', 'Quarry', 'Windmill', 'Thistle', 'Kestrel', 'Alder', 'Brook'];
+const NAME_B = ['Heights', 'Row', 'Mill', 'Park', 'Quarter', 'Flats', 'Landing', 'Green', 'End', 'Hollow', 'Crossing', 'Commons', 'Gardens', 'Point', 'Terrace', 'Wharf', 'Fields', 'Hill'];
+/** sixteen different neighbourhood names, picked by the seed */
+function districtNames(r: Rng): string[] {
+  const out: string[] = [], seen = new Set<string>();
+  while (out.length < DN * DN) {
+    const a = NAME_A[Math.floor(r() * NAME_A.length)], b = NAME_B[Math.floor(r() * NAME_B.length)];
+    if (seen.has(a)) continue;
+    seen.add(a);
+    out.push(`${a} ${b}`);
+  }
+  return out;
+}
+
 export interface River { pts: [number, number][]; width: number[] }
 
 export class Terrain {
@@ -138,6 +152,7 @@ export class Terrain {
 
 export interface DistrictInfo {
   index: number;
+  name: string;
   col: number;
   row: number;
   unlocked: boolean;
@@ -183,8 +198,8 @@ export class World {
       this.tree[i] = 0;
       // character maps
       const d = Math.hypot(cx - 1, cz - 1);
-      this.centre[i] = clamp(d / (22 * SC));
-      this.industrial[i] = clamp(0.5 * (t.noise2.fbm(cx * 0.09 / SC + 20, cz * 0.09 / SC, 3) * 0.5 + 0.5) + 0.5 * smoothstep(8 * SC, 20 * SC, d));
+      this.centre[i] = clamp(d / 22);
+      this.industrial[i] = clamp(0.5 * (t.noise2.fbm(cx * 0.09 / SC + 20, cz * 0.09 / SC, 3) * 0.5 + 0.5) + 0.5 * smoothstep(8, 20, d));
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = tileIdx(x, y);
@@ -203,12 +218,13 @@ export class World {
       if (r() < p) this.tree[i] = 1;
     }
     // districts
+    const names = districtNames(mulberry32(seed * 31 + 7));
     for (let i = 0; i < DN * DN; i++) {
       const col = i % DN, row = (i / DN) | 0;
       let land = 0;
       for (let y = row * DS; y < row * DS + DS; y++) for (let x = col * DS; x < col * DS + DS; x++) if (!this.water[tileIdx(x, y)]) land++;
       const ring = Math.max(Math.abs(col - 1.5), Math.abs(row - 1.5)); // 0.5 centre, 1.5 outer
-      this.districts.push({ index: i, col, row, unlocked: false, cost: 0, landTiles: land });
+      this.districts.push({ index: i, name: names[i], col, row, unlocked: false, cost: 0, landTiles: land });
       const corner = Math.abs(col - 1.5) > 1.4 && Math.abs(row - 1.5) > 1.4;
       this.districts[i].cost = ring < 1 ? 0 : corner ? 9000 : 5500;
     }

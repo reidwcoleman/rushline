@@ -26,6 +26,7 @@ const WISHES: { id: string; text: string; for: (p: Person, c: City) => number }[
   { id: 'gym', text: 'Work out', for: (p) => (p.stage !== 'child' && p.age < 70 ? (has(p, 'sporty') ? 3 : 0.6) : 0) },
   { id: 'fun', text: 'Have a night out', for: (p) => (p.stage !== 'child' ? 1.4 : 0.8) },
   { id: 'party', text: 'Go to a party', for: (p) => (p.stage !== 'child' && p.friends.length ? (has(p, 'social') ? 2.6 : 0.8) : 0) },
+  { id: 'skill', text: 'Get better at something', for: (p) => (p.stage !== 'child' && p.age < 75 ? 1.1 : 0) },
   { id: 'host', text: 'Throw a party', for: (p) => (p.stage === 'adult' && p.friends.length >= 2 && has(p, 'social') ? 1.6 : 0) },
 ];
 
@@ -127,6 +128,8 @@ export class Social {
     if (n.hunger < 0.25) add('Starving', -0.14); else if (n.hunger > 0.85) add('Full', 0.04);
     if (n.fun < 0.25) add('Bored stiff', -0.12); else if (n.fun > 0.8) add('Entertained', 0.05);
     if (n.social < 0.25) add('Lonely', -0.1); else if (n.social > 0.8) add('Good company', 0.05);
+    if (n.bladder < 0.15) add('Needs the bathroom', -0.06);
+    if (n.hygiene < 0.2) add('Needs a wash', -0.07); else if (n.hygiene > 0.9) add('Fresh', 0.02);
     if (n.comfort < 0.32) add('Run-down neighbourhood', -0.1); else if (n.comfort > 0.7) add('Lovely home', 0.06);
     if (p.wallet < 0) add('Broke', -0.08);
     if (p.work && p.sat < 0.45) add('Awful commute', -0.06); else if (p.work && p.sat > 0.88) add('Easy commute', 0.03);

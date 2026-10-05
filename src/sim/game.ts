@@ -1429,7 +1429,7 @@ export interface SaveData {
   fin?: { loan: number; maint: number; autoRenew: boolean; research: Record<string, number>; contracts?: Contract[]; done?: number; ach?: string[]; borrowed?: boolean };
 }
 
-export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number; pt?: number; bd?: number; sn?: number }
+export interface PersonSave { i: number; b: number; h: number; f: string; l: string; a: number; t: string[]; n: number[]; x: number; wl: number; k: number; fr: number[]; w: number; bt: number; pt?: number; bd?: number; sn?: number; sk?: number[]; as?: string; ad?: number }
 
 // save order: bus 0 and metro 1 match the first save format
 const SAVE_MODES: Mode[] = ['bus', 'metro', 'tram', 'ferry', 'gondola', 'truck', 'freight'];
@@ -1445,7 +1445,8 @@ export function serialize(g: Game): SaveData {
   const buildings = blist.map((b) => [b.x, b.y, b.special ? sp[b.special] : code[b.kind], b.level, b.variant, b.rot, b.residents.length, b.venue ?? '', b.name, ...b.out.map((v) => Math.round(v * 10) / 10), ...b.stock.map((v) => Math.round(v * 10) / 10), Math.round(b.eff * 100) / 100, b.rotFoot]);
   const people: PersonSave[] = g.city.persons.map((p) => ({
     i: p.id, b: bIndex.get(p.home.id) ?? 0, h: p.hh.id, f: p.first, l: p.last, a: p.age, t: p.traits,
-    n: [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort].map((v) => Math.round(v * 100) / 100),
+    n: [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort, p.needs.hygiene, p.needs.bladder].map((v) => Math.round(v * 100) / 100),
+    sk: p.skills.map((v) => Math.round(v * 100) / 100), as: p.aspire, ad: p.aspDone ? 1 : 0,
     x: Math.round(p.xp * 10) / 10, wl: Math.round(p.wallet), k: p.look, fr: p.friends, w: p.work ? bIndex.get(p.work.id) ?? -1 : -1, bt: Math.round(p.born), pt: p.partner, bd: p.bond, sn: Math.round(p.since),
   }));
   const stops = g.transit.stops.map((s) => [s.tile, SAVE_MODES.indexOf(s.kind), s.name, s.cap] as [number, number, string, number]);
@@ -1497,6 +1498,9 @@ export function restore(d: SaveData): Game {
       const p = g.city.createPerson(home, { age: ps.a, hh, first: ps.f });
       p.traits = ps.t.filter((t) => traitOk.has(t)) as Person['traits'];
       [p.needs.energy, p.needs.hunger, p.needs.fun, p.needs.social, p.needs.comfort] = ps.n;
+      if (ps.n.length > 5) { p.needs.hygiene = ps.n[5]; p.needs.bladder = ps.n[6]; }
+      if (ps.sk) p.skills = ps.sk.slice(0, 5);
+      p.aspire = ps.as ?? ''; p.aspDone = !!ps.ad;
       p.xp = ps.x; p.wallet = ps.wl; p.look = ps.k; p.born = ps.bt;
       p.mood = moodOf(p);
       byOld.set(ps.i, p);

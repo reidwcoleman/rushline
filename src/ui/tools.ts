@@ -451,6 +451,13 @@ export class Tools {
   private clickSelect(e: PointerEvent) {
     if (this.sendFor !== null) { this.finishSend(e); return; }
     const pk = this.view.pick(e.clientX, e.clientY);
+    const inside = this.view.interior;
+    if (inside.open && pk) {
+      const who0 = inside.pick(pk.x, pk.z, 0.07);
+      if (who0) { this.app.selectPerson(who0); return; }
+      if (pk.tile >= 0 && this.game.world.bld[pk.tile] === inside.b!.id) return;
+      inside.hide();
+    }
     if (!pk || pk.tile < 0) { this.setSelection(null); return; }
     const g = this.game, w = g.world, t = pk.tile;
     const who = this.view.citizens.pick(pk.x, pk.z, this.pickRadius());
@@ -499,18 +506,27 @@ export class Tools {
       case 'KeyT': this.app.hud.setOverlay(this.view.mode === 'transit' ? 'none' : 'transit'); break;
       case 'KeyG': this.app.hud.setOverlay(this.view.mode === 'traffic' ? 'none' : 'traffic'); break;
       case 'KeyH': this.app.hud.setOverlay(this.view.mode === 'happy' ? 'none' : 'happy'); break;
-      case 'KeyM': this.app.toggleMute(); break;
+      case 'KeyM': if (e.shiftKey) this.app.toggleMute(); else this.app.map.toggleFull(); break;
       case 'KeyU': this.app.ui.style.visibility = this.app.ui.style.visibility === 'hidden' ? '' : 'hidden'; break;
       case 'Enter': this.finishDraft(); break;
       case 'Backspace': e.preventDefault(); this.undoDraft(); break;
       case 'Escape':
-        if (this.sendFor !== null) this.cancelSend();
+        if (this.app.map.isOpen) this.app.map.closeFull();
+        else if (this.view.interior.open) this.app.leaveInside();
+        else if (this.sendFor !== null) this.cancelSend();
         else if (this.draft) this.cancelDraft();
         else if (this.tool !== 'inspect') this.select('inspect');
         else if (this.selection) this.setSelection(null);
         else if (this.app.panels.open) this.app.panels.close();
         else this.app.openPause();
         break;
+      case 'KeyI': {
+        if (this.view.interior.open) { this.app.leaveInside(); break; }
+        const s = this.selection;
+        if (s?.type === 'building') { const b = g.city.buildings.get(s.id); if (b) this.app.lookInside(b); }
+        else if (s?.type === 'person') { const p = g.city.personById.get(s.id); const b = p && p.phase === 'none' ? p.at ?? p.home : p?.home; if (b && p) this.app.lookInside(b, p); }
+        break;
+      }
       case 'Home': this.view.rig.focus(0, 0, 40); break;
     }
   }

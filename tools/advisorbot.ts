@@ -11,7 +11,7 @@ const g = new Game(seed, { diff });
 const w = g.world;
 const log: string[] = [];
 g.on('toast', (t: any) => log.push(`d${g.day} ${g.hour.toFixed(0)}h ${t.msg}`));
-let cx = 20, cy = 20;
+let cx = 32, cy = 32;
 for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const t = tileIdx(x, y); if (w.road[t] === 2 && w.road[tileIdx(x + 1, y)] === 2 && w.road[tileIdx(x, y + 1)] === 2 && w.road[tileIdx(x - 1, y)] === 2 && w.road[tileIdx(x, y - 1)] === 2) { cx = x; cy = y; } }
 function gridStep() {
   const cand: { tiles: number[]; d: number }[] = [];

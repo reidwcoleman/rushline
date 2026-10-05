@@ -14,7 +14,7 @@ const res = await page.evaluate(async (rounds) => {
   g.money = 5e6;
   for (const k of ['tram', 'ferry', 'gondola', 'metro', 'truck', 'freight', 'school', 'clinic']) g.unlocked[k] = true;
   const R = () => g.rand();
-  const N = 40;
+  const N = 64;
   const randTile = () => Math.floor(R() * N * N);
   const randRoad = () => { for (let k = 0; k < 200; k++) { const t = randTile(); if (w.road[t]) return t; } return -1; };
   const keys = ['toll', 'busLanes', 'stagger', 'remote', 'freeTransit'];

@@ -27,22 +27,22 @@ ok('clicking the highway chip switches tool', await page.evaluate(() => __app.to
 // find a free row stretch and drag a highway across it
 const run = await page.evaluate(() => {
   const w = __game.world; let best = null;
-  for (let y = 6; y < 34; y++) {
+  for (let y = 14; y < 50; y++) {
     let start = -1;
-    for (let x = 4; x <= 36; x++) {
-      const t = y * 40 + x;
+    for (let x = 8; x <= 56; x++) {
+      const t = y * 64 + x;
       const free = w.isUnlocked(t) && w.bld[t] < 0 && !w.park[t] && w.stop[t] < 0 && !w.water[t] && !w.rail[t];
       if (free) { if (start < 0) start = x; } else { if (start >= 0 && x - start >= 14 && (!best || x - start > best.len)) best = { y, x0: start, len: x - start }; start = -1; }
     }
-    if (start >= 0 && 37 - start >= 14 && (!best || 37 - start > best.len)) best = { y, x0: start, len: 37 - start };
+    if (start >= 0 && 57 - start >= 14 && (!best || 57 - start > best.len)) best = { y, x0: start, len: 57 - start };
   }
   return best;
 });
 ok('found open ground for a highway', !!run, JSON.stringify(run));
-const a = run.y * 40 + run.x0, b = run.y * 40 + run.x0 + Math.min(18, run.len - 1);
-await page.evaluate(([a, b]) => { __cam(((a % 40) + (b % 40)) / 2 - 20 + 0.5, Math.floor(a / 40) - 20 + 0.5, 30, 0.7, 0.9); __pump(5); }, [a, b]);
-const pa = await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), a);
-const pb = await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), b);
+const a = run.y * 64 + run.x0, b = run.y * 64 + run.x0 + Math.min(18, run.len - 1);
+await page.evaluate(([a, b]) => { __cam(((a % 64) + (b % 64)) / 2 - 32 + 0.5, Math.floor(a / 64) - 32 + 0.5, 30, 0.7, 0.9); __pump(5); }, [a, b]);
+const pa = await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), a);
+const pb = await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), b);
 const before = await page.evaluate(() => ({ money: __game.money, hw: __game.world.road.filter((r) => r === 3).length }));
 await page.mouse.move(pa[0], pa[1]); await page.mouse.down();
 await page.mouse.move((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, { steps: 6 }); await page.mouse.move(pb[0], pb[1], { steps: 6 });
@@ -59,10 +59,10 @@ ok('it cost money', after.money < before.money);
 await page.keyboard.press('0'); await page.waitForTimeout(150);
 ok('key 0 picks the junction tool', await page.evaluate(() => __app.tools.tool) === 'junction');
 ok('junction chips shown', (await page.$$('.context .mode-row .mchip')).length === 4);
-const jn = await page.evaluate(() => { const w = __game.world; return [...Array(1600).keys()].filter((i) => w.surf(i) && w.degree(i) >= 3).sort((x, y) => Math.hypot((x % 40) - 20, ((x / 40) | 0) - 20) - Math.hypot((y % 40) - 20, ((y / 40) | 0) - 20)); });
+const jn = await page.evaluate(() => { const w = __game.world; return [...Array(4096).keys()].filter((i) => w.surf(i) && w.degree(i) >= 3).sort((x, y) => Math.hypot((x % 64) - 32, ((x / 64) | 0) - 32) - Math.hypot((y % 64) - 32, ((y / 64) | 0) - 32)); });
 const clickTile = async (t, dist = 14) => {
-  await page.evaluate(([t, dist]) => { __cam((t % 40) - 20 + 0.5, Math.floor(t / 40) - 20 + 0.5, dist, 0.7, 0.9); __pump(3); }, [t, dist]);
-  const p = await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), t);
+  await page.evaluate(([t, dist]) => { __cam((t % 64) - 32 + 0.5, Math.floor(t / 64) - 32 + 0.5, dist, 0.7, 0.9); __pump(3); }, [t, dist]);
+  const p = await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), t);
   await page.mouse.move(p[0], p[1]); await page.waitForTimeout(80); await page.mouse.click(p[0], p[1]); await page.waitForTimeout(150);
 };
 // default junction mode is the roundabout
@@ -73,12 +73,12 @@ ok('signals chip selected', await page.evaluate(() => __app.tools.jmode) === 'si
 await clickTile(jn[6]);
 ok('signals placed', await page.evaluate((t) => __game.world.ctl[t], jn[6]) === 1);
 await (await page.$$('.context .mode-row .mchip'))[2].click(); await page.waitForTimeout(100);
-const hwTile = await page.evaluate(() => { const w = __game.world; return [...Array(1600).keys()].find((i) => w.road[i] === 3 && !w.ramp[i] && __game.nextToSurface(i) && !w.under[i]) ?? [...Array(1600).keys()].find((i) => w.under[i]); });
+const hwTile = await page.evaluate(() => { const w = __game.world; return [...Array(4096).keys()].find((i) => w.road[i] === 3 && !w.ramp[i] && __game.nextToSurface(i) && !w.under[i]) ?? [...Array(4096).keys()].find((i) => w.under[i]); });
 if (hwTile !== undefined) { await clickTile(hwTile); ok('interchange placed', await page.evaluate((t) => __game.world.ramp[t], hwTile) === 1); }
 // refuse on a street
 await page.evaluate(() => __app.tools.setJMode('roundabout'));
 const toastsBefore = await page.$$eval('.toast', (e) => e.length);
-const street = await page.evaluate(() => { const w = __game.world; return [...Array(1600).keys()].find((i) => w.road[i] === 1 && w.degree(i) === 2); });
+const street = await page.evaluate(() => { const w = __game.world; return [...Array(4096).keys()].find((i) => w.road[i] === 1 && w.degree(i) === 2); });
 await clickTile(street);
 ok('roundabout refused on a plain street', await page.evaluate((t) => __game.world.ctl[t], street) === 0);
 

@@ -165,14 +165,14 @@ export const rollLook = (r: Rng) => Math.floor(r() * 0x7fffff);
 
 // ------------------------------------------------------------------ needs and mood
 
-export const NEED_KEYS = ['energy', 'hunger', 'fun', 'social', 'comfort'] as const;
-export const NEED_LABEL: Record<keyof Needs, string> = { energy: 'Energy', hunger: 'Hunger', fun: 'Fun', social: 'Social', comfort: 'Comfort' };
-export const freshNeeds = (r: Rng): Needs => ({ energy: 0.7 + r() * 0.25, hunger: 0.6 + r() * 0.3, fun: 0.55 + r() * 0.35, social: 0.55 + r() * 0.35, comfort: 0.55 + r() * 0.3 });
+export const NEED_KEYS = ['energy', 'hunger', 'bladder', 'hygiene', 'fun', 'social', 'comfort'] as const;
+export const NEED_LABEL: Record<keyof Needs, string> = { energy: 'Energy', hunger: 'Hunger', bladder: 'Bladder', hygiene: 'Hygiene', fun: 'Fun', social: 'Social', comfort: 'Comfort' };
+export const freshNeeds = (r: Rng): Needs => ({ energy: 0.7 + r() * 0.25, hunger: 0.6 + r() * 0.3, fun: 0.55 + r() * 0.35, social: 0.55 + r() * 0.35, comfort: 0.55 + r() * 0.3, hygiene: 0.7 + r() * 0.25, bladder: 0.7 + r() * 0.25 });
 
 export function moodOf(p: Person): number {
   const n = p.needs;
-  let m = 0.14 * n.energy + 0.2 * n.hunger + 0.2 * n.fun + 0.14 * n.social + 0.32 * n.comfort;
-  const low = Math.min(n.energy, n.hunger, n.fun, n.social, n.comfort);
+  let m = 0.13 * n.energy + 0.18 * n.hunger + 0.18 * n.fun + 0.13 * n.social + 0.26 * n.comfort + 0.06 * n.hygiene + 0.06 * n.bladder;
+  const low = Math.min(n.energy, n.hunger, n.fun, n.social, n.comfort, n.hygiene + 0.15, n.bladder + 0.15);
   if (low < 0.25) m -= (0.25 - low) * 0.7;
   if (has(p, 'sunny')) m += 0.07;
   if (has(p, 'grump')) m -= 0.07;

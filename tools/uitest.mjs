@@ -10,7 +10,7 @@ await page.waitForFunction(() => window.__ready === true, null, { timeout: 12000
 await page.evaluate(() => { __hold(true); __view.fixedHour = 11; __cam(0, 0, 26, 0.7, 0.9); __pump(10); });
 const at = async (tx, ty) => page.evaluate(([x, y]) => __screen(x, y), [tx, ty]);
 // bus tool: click three road tiles
-const roads = await page.evaluate(() => { const w = __game.world; const out = []; for (let i = 0; i < 1600; i++) if (w.road[i] && w.stopKind[i] === 0 && w.bld[i] < 0) out.push(i); return out; });
+const roads = await page.evaluate(() => { const w = __game.world; const out = []; for (let i = 0; i < 4096; i++) if (w.road[i] && w.stopKind[i] === 0 && w.bld[i] < 0) out.push(i); return out; });
 const pick = (n) => roads[Math.floor((roads.length * n) % roads.length)];
 await page.keyboard.press('Digit4');
 const pts = [];
@@ -21,7 +21,7 @@ for (const i of [820, 830, 835]) {
 const tiles = await page.evaluate(() => { const w = __game.world; const r = []; for (let x = 12; x <= 28; x += 4) { const t = 20 * 40 + x; if (w.road[t]) r.push(t); } return r; });
 console.log('bus tiles', tiles);
 for (const t of tiles) {
-  const [x, y] = await at(t % 40, Math.floor(t / 40));
+  const [x, y] = await at(t % 64, Math.floor(t / 64));
   await page.mouse.move(x, y); await page.waitForTimeout(40); await page.mouse.click(x, y);
 }
 await page.evaluate(() => __pump(3));

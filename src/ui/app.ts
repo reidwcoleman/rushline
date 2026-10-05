@@ -8,8 +8,10 @@ import { h, icon, money, fmt } from './dom.ts';
 import { Tools } from './tools.ts';
 import { Hud } from './hud.ts';
 import { Panels } from './panels.ts';
+import { MapView } from './map.ts';
+import { SimBar } from './simbar.ts';
 import { MODES, MODE_ORDER, CARGO_ORDER } from '../sim/modes.ts';
-import type { Person } from '../sim/types.ts';
+import type { Person, Building } from '../sim/types.ts';
 import type { Quality } from '../render/renderer.ts';
 
 const SAVE_KEY = 'rushline.save.v1';
@@ -25,6 +27,8 @@ export class App {
   sound = new Sound();
   tools!: Tools;
   hud!: Hud;
+  map!: MapView;
+  simbar!: SimBar;
   panels!: Panels;
   modal: HTMLElement | null = null;
   ui: HTMLElement;
@@ -58,6 +62,9 @@ export class App {
     this.panels = new Panels(this, this.ui);
     this.tools = new Tools(this);
     this.hud = new Hud(this, this.ui);
+    this.map = new MapView(this, this.ui);
+    this.simbar = new SimBar(this, this.ui);
+    this.view.interior.onChange = (b) => this.hud.setInside(b);
     this.bindGame();
     this.panels.sync();
     this.hud.refreshContext();
@@ -157,6 +164,16 @@ export class App {
     this.prefs.quality = this.quality; this.prefs.music = this.sound.musicOn; this.prefs.muted = this.sound.muted;
     try { localStorage.setItem(PREF_KEY, JSON.stringify(this.prefs)); } catch { /* private mode */ }
   }
+
+  /** lift the roof off a building and look at the rooms */
+  lookInside(b: Building, who?: Person) {
+    const it = this.view.interior;
+    if (!it.canEnter(b)) { this.toast('Nothing to see inside that one.', 'info'); return; }
+    it.show(b);
+    if (who) { this.tools.setSelection({ type: 'person', id: who.id }); this.view.focusPerson = who; }
+    this.sound.sfx('click');
+  }
+  leaveInside() { if (this.view.interior.open) { this.view.interior.hide(); this.sound.sfx('click'); } }
 
   buyDistrict(i: number) {
     const r = this.game.unlockDistrict(i);
@@ -371,6 +388,7 @@ export class App {
     else { v.focusPerson = null; v.follow = false; }
     this.hud.update(dt);
     this.panels.update(dt);
+    if (!this.titleMode) { this.map.update(dt); this.simbar.update(dt); }
     this.updateCoach(dt);
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc > 1) { this.fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0; }

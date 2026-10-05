@@ -31,6 +31,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'wedding', title: 'Just married', desc: 'Two citizens marry.', test: (g) => g.city.social.weddings > 0 },
   { id: 'party', title: 'Life of the party', desc: 'A citizen throws a party.', test: (g) => g.city.social.parties > 0 },
   { id: 'wishes', title: 'Dreams come true', desc: '25 wishes fulfilled.', test: (g) => g.city.social.wishes >= 25 },
+  { id: 'aspire', title: 'A life well lived', desc: 'A citizen fulfils their lifetime aspiration.', test: (g) => g.city.aspirationsDone >= 1 },
+  { id: 'master', title: 'Master of one', desc: 'A citizen reaches level 10 in a skill.', test: (g) => g.city.skillMasters >= 1 },
   { id: 'builder', title: 'Lot by lot', desc: 'Place 10 buildings yourself.', test: (g) => g.lotsPlaced >= 10 },
   { id: 'survive-30', title: 'Thirty days', desc: 'Keep the city running for 30 days.', test: (g) => g.day >= 31 },
   { id: 'big-city', title: 'Metropolis', desc: 'Reach 9,000 residents.', test: (g) => g.bestPop >= 9000 },

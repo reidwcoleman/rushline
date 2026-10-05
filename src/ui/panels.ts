@@ -174,7 +174,7 @@ export class Panels {
       cargo,
       b0.special && b0.special !== 'arena' && b0.special !== 'school' && b0.special !== 'clinic' ? null : b0.special ? null : h('div', { class: 'kv' }, h('div', { class: 'row' }, h('span', { class: 'k' }, 'Land value'), h('span', { class: 'v' }, b0.level < 3 ? 'drives upgrades' : 'maxed')), land.el),
       h('div', { class: 'empty' }, tip),
-      h('div', { class: 'actions' }, h('button', { class: 'btn danger sm', onClick: () => { const r = g.bulldoze(b0.tile); if (r.ok) this.app.tools.setSelection(null); else this.app.toast(r.msg ?? '', 'warn'); } }, `Demolish · ${money(COST.bulldoze)}`)));
+      h('div', { class: 'actions' }, this.app.view.interior.canEnter(b0) ? h('button', { class: 'btn sm primary', title: 'Lift the roof off (I)', onClick: () => this.app.lookInside(b0) }, 'Look inside') : null, h('button', { class: 'btn danger sm', onClick: () => { const r = g.bulldoze(b0.tile); if (r.ok) this.app.tools.setSelection(null); else this.app.toast(r.msg ?? '', 'warn'); } }, `Demolish · ${money(COST.bulldoze)}`)));
     void moodColorHex;
     // name your own places
     if (b0.kind !== 'res' && b0.name && !b0.special) {

@@ -32,6 +32,9 @@ export class CitizensView {
   /** extra height of a rider by vehicle kind; set by the view */
   carrierY: (p: Person) => number = () => 0.4;
   buildingH: (b: Building) => number = () => 0.5;
+  /** where a person is when their home or workplace is on show with the roof off */
+  interiorPos: (p: Person) => { x: number; y: number; z: number } | null = () => null;
+  markerScale = 1;
 
   constructor(scene: THREE.Scene, readonly game: Game) {
     const g = personGeo();
@@ -172,7 +175,8 @@ export class CitizensView {
     if (focus && !focus.dead) {
       const w = this.where(focus);
       this.marker.visible = true;
-      this.marker.position.set(w.x, w.y + 0.2 + Math.sin(time * 3) * 0.025, w.z);
+      this.marker.position.set(w.x, w.y + 0.2 * this.markerScale + Math.sin(time * 3) * 0.025 * this.markerScale, w.z);
+      this.marker.scale.set(0.8 * this.markerScale, 1.35 * this.markerScale, 0.8 * this.markerScale);
       this.marker.rotation.y = time * 1.6;
       const col = new THREE.Color(moodColorHex(focus.mood));
       this.markerMat.color.copy(col); this.markerMat.emissive.copy(col);
@@ -182,6 +186,8 @@ export class CitizensView {
 
   /** where a person is and how high to put a marker over them */
   where(p: Person): { x: number; z: number; y: number; inside: boolean } {
+    const ip = this.interiorPos(p);
+    if (ip) return { x: ip.x, z: ip.z, y: ip.y - 0.1, inside: true };
     const pos = this.game.city.positionOf(p);
     let y = 0.14;
     if (pos.inside) { const b = p.at ?? p.home; y = this.buildingH(b) + 0.05; }

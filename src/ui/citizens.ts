@@ -4,6 +4,7 @@ import { drawAvatar } from './avatar.ts';
 import { NEED_KEYS, NEED_LABEL, TRAITS, moodWord, moodColorHex, fullName, careerTier } from '../sim/people.ts';
 import { dayOf, hourOf } from '../sim/types.ts';
 import { HALF } from '../sim/world.ts';
+import { SKILL_IDS, SKILL_INFO, skillLevel, skillValue, aspirationOf } from '../sim/skills.ts';
 import type { Person, Building } from '../sim/types.ts';
 import type { FeedItem } from '../sim/city.ts';
 import type { App } from './app.ts';
@@ -39,12 +40,8 @@ export function citizenPanel(P: Panels, id: number): Built {
   const moodChip = h('span', { class: 'moodchip' }, '');
   const now = h('div', { class: 'now' }, '');
   const thought = h('div', { class: 'thought' }, '');
-  const needs = NEED_KEYS.map((k) => {
-    const m = P.meter(0.5);
-    const val = h('span', { class: 'v num' }, '');
-    const row = h('div', { class: 'need' }, h('span', { class: 'ic' }, icon(NEED_ICON[k])), h('span', { class: 'k' }, NEED_LABEL[k]), m.el, val);
-    return { k, m, val, row };
-  });
+  const skillsEl = h('div', { class: 'skills' });
+  const aspEl = h('div', { class: 'aspire' });
   const traits = h('div', { class: 'chips' });
   const wants = h('div', { class: 'chips' });
   const family = h('div', { class: 'chips' });
@@ -61,19 +58,34 @@ export function citizenPanel(P: Panels, id: number): Built {
   const [rLove, vLove] = P.row('Partner', '');
   const story = h('div', { class: 'story' });
   const followBtn = h('button', { class: 'btn sm primary', onClick: () => { app.toggleFollow(); upd(); } }, 'Follow');
+  const insideBtn = h('button', { class: 'btn sm', title: 'Lift the roof off (I)', style: { display: 'none' }, onClick: () => { const p = city.personById.get(id); const b = p?.at ?? p?.home; if (b) app.lookInside(b, p); } }, 'Look inside');
   let lastLook = -1, lastMoodBand = -1;
   const upd = () => {
     const p = city.personById.get(id);
     if (!p) { app.tools.setSelection(null); return; }
     const band = p.mood > 0.6 ? 2 : p.mood > 0.42 ? 1 : 0;
-    if (p.look !== lastLook || band !== lastMoodBand) { lastLook = p.look; lastMoodBand = band; drawAvatar(cv, p); }
+    void band; void lastLook; void lastMoodBand;
+    { const b = p.phase === 'none' ? p.at : null; insideBtn.style.display = b && app.view.interior.canEnter(b) ? '' : 'none'; insideBtn.textContent = b && b.kind === 'res' && b !== p.home ? 'Look inside' : b ? 'Look inside' : ''; }
     name.textContent = fullName(p);
     sub.textContent = personLine(p);
-    moodChip.textContent = moodWord(p.mood);
-    moodChip.style.setProperty('--c', moodColorHex(p.mood));
-    now.textContent = city.activityOf(p, hourOf(g.t));
     thought.textContent = `“${city.thoughtOf(p)}”`;
-    for (const n of needs) { const v = p.needs[n.k]; n.m.set(v, needColor(v)); n.val.textContent = `${Math.round(v * 100)}`; }
+    // skills and the lifetime aspiration
+    const skey = p.skills.map((v) => Math.floor(v * 4)).join(',') + p.aspire + p.aspDone + p.friends.length + p.bond;
+    if ((skillsEl as any)._k !== skey) {
+      (skillsEl as any)._k = skey;
+      clear(skillsEl);
+      for (const sid of SKILL_IDS) {
+        const v = skillValue(p, sid), lv = skillLevel(p, sid);
+        skillsEl.append(h('div', { class: 'skill', title: SKILL_INFO[sid].how }, icon(SKILL_INFO[sid].icon), h('span', { class: 'k' }, SKILL_INFO[sid].label),
+          h('span', { class: 'pips' }, ...Array.from({ length: 10 }, (_, i) => h('i', { class: i < lv ? 'on' : i === lv && v - lv > 0.25 ? 'half' : '' }))), h('span', { class: 'v num' }, String(lv))));
+      }
+      clear(aspEl);
+      const a = aspirationOf(p);
+      if (a) {
+        const pr = p.aspDone ? 1 : Math.min(1, a.progress(p));
+        aspEl.append(h('div', { class: 'row' }, h('b', {}, a.label), h('span', { class: 'num' }, p.aspDone ? 'Fulfilled' : `${Math.round(pr * 100)}%`)), P.meter(pr, p.aspDone ? 'var(--green)' : 'var(--amber)').el, h('small', {}, a.goal));
+      } else aspEl.append(h('div', { class: 'empty', style: { padding: '0' } }, p.age < 18 ? 'Aspirations start at 18.' : 'Still deciding what to do with their life.'));
+    }
     clear(traits);
     for (const t of p.traits) traits.append(h('span', { class: 'chip', title: TRAITS[t].desc }, TRAITS[t].label));
     clear(wants);
@@ -142,14 +154,16 @@ export function citizenPanel(P: Panels, id: number): Built {
     followBtn.classList.toggle('on', app.view.follow && app.view.focusPerson === p);
   };
   const el = h('div', { class: 'side glass citizen' },
-    h('div', { class: 'head' }, h('div', { class: 'who' }, cv, h('div', {}, name, sub, moodChip)), h('button', { class: 'x', title: 'Close', onClick: () => P.close() }, icon('close'))),
+    h('div', { class: 'head' }, h('div', { class: 'who' }, h('div', {}, name, sub)), h('button', { class: 'x', title: 'Close', onClick: () => P.close() }, icon('close'))),
     h('div', { class: 'actions' }, followBtn,
       h('button', { class: 'btn sm', onClick: () => app.view.rig.focus(p0.home.x - HALF + 0.5, p0.home.y - HALF + 0.5, 14) }, 'Home'),
-      h('button', { class: 'btn sm', onClick: () => { const p = city.personById.get(id); if (p?.work) app.view.rig.focus(p.work.x - HALF + 0.5, p.work.y - HALF + 0.5, 14); } }, 'Work')),
-    h('div', { class: 'live' }, h('div', { class: 'k' }, 'Right now'), now, thought, wishEl),
+      h('button', { class: 'btn sm', onClick: () => { const p = city.personById.get(id); if (p?.work) app.view.rig.focus(p.work.x - HALF + 0.5, p.work.y - HALF + 0.5, 14); } }, 'Work'),
+      insideBtn),
+    h('div', { class: 'live' }, thought, wishEl),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Do something'), doRow, orderEl),
-    h('div', { class: 'needs' }, ...needs.map((n) => n.row)),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Mood'), moodlets),
+    h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Lifetime aspiration'), aspEl),
+    h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Skills'), skillsEl),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Traits'), traits),
     h('div', { class: 'sec' }, h('div', { class: 'k' }, 'Wants'), wants),
     h('div', { class: 'kv' }, rHome, rWork, rPay, rCash, rFr, rLove),

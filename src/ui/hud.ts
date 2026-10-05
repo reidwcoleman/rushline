@@ -149,6 +149,22 @@ export class Hud {
     this.refreshSpeed();
   }
 
+  private insideChip: HTMLElement | null = null;
+  /** a bar at the top while the roof is off a building */
+  setInside(b: import('../sim/types.ts').Building | null) {
+    this.insideChip?.remove();
+    this.insideChip = null;
+    if (!b) return;
+    const city = this.app.game.city;
+    const title = b.kind === 'res' ? city.addressOf(b) : b.name;
+    const count = h('span', { class: 'cnt' }, '');
+    const chip = h('div', { class: 'inside-chip glass' }, h('span', { class: 'ttl' }, 'Inside ', h('b', {}, title)), count,
+      h('button', { class: 'btn sm', onClick: () => this.app.leaveInside() }, 'Back outside', h('kbd', {}, 'Esc')));
+    (chip as any)._count = count;
+    this.insideChip = chip;
+    this.root.append(chip);
+  }
+
   private risk(label: string) {
     const el = h('div', { class: 'risk', style: { cursor: 'pointer' }, title: `Show the worst ${label.toLowerCase()} problem`, onClick: () => this.app.focusProblem(label === 'Traffic' ? 'traffic' : label === 'Transit' ? 'transit' : 'mood') }, h('span', {}, label), h('div', { class: 'mini' }, h('i')));
     return el;
@@ -448,6 +464,13 @@ export class Hud {
   // ------------------------------------------------------------ per-frame
 
   update(dt: number) {
+    if (this.insideChip) {
+      const it = this.app.view.interior;
+      const n = it.count;
+      const el = (this.insideChip as any)._count as HTMLElement;
+      const txt = n === 0 ? 'Nobody here right now' : `${n} here now`;
+      if (el.textContent !== txt) el.textContent = txt;
+    }
     this.acc += dt;
     const g = this.app.game;
     this.moveTip();
@@ -482,7 +505,7 @@ export class Hud {
     const hr = hourOf(g.t);
     clear(e.when);
     const rainy = this.app.view.rainTarget > 0.5;
-    e.when.append(icon(rainy ? 'rain' : hr >= 6.3 && hr < 18.8 ? 'sun' : 'moon'), `Day ${dayOf(g.t)}  ${clock(hr)}`);
+    e.when.append(icon(rainy ? 'rain' : hr >= 6.3 && hr < 18.8 ? 'sun' : 'moon'), `Day ${dayOf(g.t)} · ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][(dayOf(g.t) - 1) % 7]}  ${clock(hr)}`);
     const rush = hr >= 6.8 && hr < 9.6 ? 'Morning rush' : hr >= 16.4 && hr < 19.2 ? 'Evening rush' : '';
     if (rush) e.when.append(h('span', { class: 'rush' }, rush));
     // money
@@ -688,7 +711,7 @@ export class Hud {
         (el as any)._k = key;
         clear(el);
         el.className = 'pill' + (afford ? ' afford' : '');
-        el.append(icon(afford ? 'plus' : 'lock'), `Expand ${money(d.cost)}`);
+        el.append(icon(afford ? 'plus' : 'lock'), `${d.name} · ${money(d.cost)}`);
       }
       el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
     }

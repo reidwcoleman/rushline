@@ -16,7 +16,7 @@ const pid = await page.evaluate(() => {
   const c = __game.city;
   const p = c.persons.find((q) => q.stage === 'adult' && q.phase === 'none' && q.state === 'home' && q.friends.length >= 2 && q.home.access >= 0) ?? c.persons.find((q) => q.stage === 'adult' && q.phase === 'none' && q.state === 'home');
   __app.selectPerson(p, true);
-  __cam(p.home.x - 20 + 0.5, p.home.y - 20 + 0.5, 12, 0.7, 0.9); __pump(5);
+  __cam(p.home.x - 32 + 0.5, p.home.y - 32 + 0.5, 12, 0.7, 0.9); __pump(5);
   return p.id;
 });
 await page.waitForTimeout(200);
@@ -43,7 +43,7 @@ const target = await page.evaluate((id) => {
   const c = __game.city, p = c.personById.get(id);
   let best = null;
   for (const b of c.buildings.values()) if (b.kind === 'com' && !b.special && b.access >= 0 && b !== p.work) { const d = Math.hypot(b.x - p.home.x, b.y - p.home.y); if (d > 3 && (!best || d < best.d)) best = { b, d }; }
-  __cam(p.home.x - 20 + 0.5, p.home.y - 20 + 0.5, 20, 0.7, 0.9); __pump(3);
+  __cam(p.home.x - 32 + 0.5, p.home.y - 32 + 0.5, 20, 0.7, 0.9); __pump(3);
   return best ? { tile: best.b.tile, name: best.b.name } : null;
 }, pid);
 await page.evaluate(() => { __app.tools.select('inspect'); });
@@ -52,7 +52,7 @@ await page.waitForTimeout(150);
 const sendBtn = (await page.$$('.side.citizen .chips.acts .chip.send'))[0];
 await sendBtn.click(); await page.waitForTimeout(100);
 ok('send mode on', await page.evaluate(() => __app.tools.sendFor !== null));
-const sp = await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), target.tile);
+const sp = await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), target.tile);
 await page.mouse.move(sp[0], sp[1]); await page.waitForTimeout(80);
 await page.mouse.click(sp[0], sp[1]); await page.waitForTimeout(200);
 const o2 = await page.evaluate((id) => { const p = __game.city.personById.get(id); return { n: p.orders.length, label: p.orders[0]?.label, sendFor: __app.tools.sendFor }; }, pid);
@@ -69,7 +69,7 @@ for (const b of chips2) { if ((await b.textContent()) === 'Throw a party') { awa
 await page.waitForTimeout(150);
 const pa = await page.evaluate((id) => { const c = __game.city; const p = c.personById.get(id); return { active: c.social.active.size, host: p.orders[0]?.kind }; }, pid);
 ok('party started', pa.active >= 1 && pa.host === 'host', JSON.stringify(pa));
-await page.evaluate((id) => { const p = __game.city.personById.get(id); __cam(p.home.x - 20 + 0.5, p.home.y - 20 + 0.5, 9, 0.7, 0.8); __pump(400, 1 / 30); }, pid);
+await page.evaluate((id) => { const p = __game.city.personById.get(id); __cam(p.home.x - 32 + 0.5, p.home.y - 32 + 0.5, 9, 0.7, 0.8); __pump(400, 1 / 30); }, pid);
 await page.screenshot({ path: 'shots/simsui_party.png' });
 await page.evaluate((id) => { __app.selectPerson(__game.city.personById.get(id), true); __pump(3); }, pid);
 await page.waitForTimeout(200);
@@ -85,12 +85,12 @@ await lc[3].click(); await page.waitForTimeout(80); // cafe
 ok('cafe chosen', await page.evaluate(() => __app.tools.lot) === 'cafe');
 const spot = await page.evaluate(() => {
   const g = __game, w = g.world;
-  const cands = [...Array(1600).keys()].filter((i) => g.lotCheck('cafe', i) === null).sort((a, b) => Math.hypot((a % 40) - 20, ((a / 40) | 0) - 20) - Math.hypot((b % 40) - 20, ((b / 40) | 0) - 20));
+  const cands = [...Array(4096).keys()].filter((i) => g.lotCheck('cafe', i) === null).sort((a, b) => Math.hypot((a % 64) - 32, ((a / 64) | 0) - 32) - Math.hypot((b % 64) - 32, ((b / 64) | 0) - 32));
   const t = cands[0];
-  __cam((t % 40) - 20 + 0.5, Math.floor(t / 40) - 20 + 0.5, 12, 0.7, 0.9); __pump(3);
+  __cam((t % 64) - 32 + 0.5, Math.floor(t / 64) - 32 + 0.5, 12, 0.7, 0.9); __pump(3);
   return { t, n: g.city.buildings.size, money: g.money };
 });
-const lp = await page.evaluate((t) => __screen(t % 40, Math.floor(t / 40)), spot.t);
+const lp = await page.evaluate((t) => __screen(t % 64, Math.floor(t / 64)), spot.t);
 await page.mouse.move(lp[0], lp[1]); await page.waitForTimeout(80);
 await page.mouse.click(lp[0], lp[1]); await page.waitForTimeout(200);
 const after = await page.evaluate(() => ({ n: __game.city.buildings.size, money: __game.money }));

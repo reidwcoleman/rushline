@@ -5,7 +5,7 @@ import { Noise2, smoothstep, clamp, lerp } from '../sim/util.ts';
 import { World, N, HALF, SC, WATER_LEVEL, DN, DS } from '../sim/world.ts';
 
 export const EXT = 56 * SC;          // half-size of the terrain mesh in world units
-const SEG = 336;
+const SEG = 272;
 
 const col = (hex: number) => new THREE.Color(hex);
 

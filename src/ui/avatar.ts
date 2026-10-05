@@ -4,12 +4,13 @@ import type { Person } from '../sim/types.ts';
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
-export function drawAvatar(cv: HTMLCanvasElement, p: Pick<Person, 'look' | 'age' | 'mood'>) {
-  const S = 64, dpr = Math.min(2, window.devicePixelRatio || 1);
-  cv.width = S * dpr; cv.height = S * dpr;
-  cv.style.width = S + 'px'; cv.style.height = S + 'px';
+export function drawAvatar(cv: HTMLCanvasElement, p: Pick<Person, 'look' | 'age' | 'mood'>, size = 64) {
+  const S = 64, dpr = Math.min(2, window.devicePixelRatio || 1) * Math.max(1, size / 64);
+  cv.width = Math.round(size * Math.min(2, window.devicePixelRatio || 1) * Math.max(1, size / 64)); cv.height = cv.width;
+  cv.style.width = size + 'px'; cv.style.height = size + 'px';
   const c = cv.getContext('2d')!;
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.setTransform(cv.width / S, 0, 0, cv.width / S, 0, 0);
+  void dpr;
   c.clearRect(0, 0, S, S);
   const L = decodeLook(p.look);
   const skin = SKIN[L.skin], hair = HAIR[L.hairColor], shirt = hex(SHIRT[L.shirt]);

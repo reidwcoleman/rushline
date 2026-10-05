@@ -44,7 +44,7 @@ export class CameraRig {
     }
     this.camera.lookAt(this.target);
     // keep the far plane sensible and the near plane tight enough for depth precision
-    this.camera.near = Math.max(1, this.dist * 0.12);
+    this.camera.near = Math.max(0.2, this.dist * 0.12);
     this.camera.far = 700;
     this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld();

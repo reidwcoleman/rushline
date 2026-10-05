@@ -20,6 +20,7 @@ import { isRoadMode } from '../sim/modes.ts';
 import { CitizensView } from './citizens.ts';
 import { AirView } from './air.ts';
 import { SignalView } from './signals.ts';
+import { InteriorView } from './interior.ts';
 import type { Person } from '../sim/types.ts';
 
 const CONFETTI: [number, number, number][] = [[1, 0.45, 0.62], [1, 0.82, 0.25], [0.35, 0.8, 0.95], [0.5, 0.9, 0.5], [0.8, 0.55, 1]];
@@ -45,6 +46,7 @@ export class View {
   citizens: CitizensView;
   air: AirView;
   signals: SignalView;
+  interior: InteriorView;
   /** the citizen the marker rides on, and whether the camera follows them */
   focusPerson: Person | null = null;
   follow = false;
@@ -106,6 +108,8 @@ export class View {
     this.citizens = new CitizensView(this.scene, game);
     this.air = new AirView(this.scene, game, this.fx);
     this.signals = new SignalView(this.scene, game);
+    this.interior = new InteriorView(this.scene, game, this.buildings, this.rig);
+    this.citizens.interiorPos = (p) => this.interior.posOf(p);
     this.citizens.buildingH = (b) => this.buildings.heightOf(b);
     this.citizens.carrierY = (p) => {
       const c = p.ride; if (!c) return 0.4;
@@ -232,6 +236,8 @@ export class View {
     this.life.update(dt, this.time);
     this.life.setNight(this.tod.night + this.rainAmt);
     this.life.setWalkers(Math.min(90, Math.floor(game.pop / 30)) * (1 - Math.min(0.75, this.tod.night * 0.75 + this.rainAmt * 0.4)));
+    this.interior.update(dt, this.time);
+    this.citizens.markerScale = this.interior.open ? 0.4 : 1;
     this.citizens.update(dt, this.time, this.focusPerson, Math.min(0.75, this.tod.night * 0.75 + this.rainAmt * 0.4));
     if (this.focusPerson && this.focusPerson.dead) { this.focusPerson = null; this.follow = false; }
     if (this.follow && this.focusPerson) {

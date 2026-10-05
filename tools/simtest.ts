@@ -44,9 +44,9 @@ function busLine() {
 const lines: number[][] = [];
 function gridStep() {
   // lay one more grid line (every 4th row/col from the centre) inside unlocked districts
-  const cx = 20, cy = 20;
+  const cx = 32, cy = 32;
   const cand: { tiles: number[]; lvl: 1 | 2; d: number }[] = [];
-  for (let k = -20; k <= 20; k += 4) {
+  for (let k = -32; k <= 32; k += 4) {
     const row: number[] = [], col: number[] = [];
     for (let i = 0; i < N; i++) {
       const rt = tileIdx(i, cy + k), ct = tileIdx(cx + k, i);
@@ -60,7 +60,7 @@ function gridStep() {
   for (const c of cand) { const r = g.buildRoad(c.tiles, c.lvl); if (r.ok) return; }
 }
 function avenues() {
-  const cy = 20, cx = 20;
+  const cy = 32, cx = 32;
   const row: number[] = [], col: number[] = [];
   for (let i = 0; i < N; i++) { row.push(tileIdx(i, cy)); col.push(tileIdx(cx, i)); }
   g.buildRoad(row.filter((t) => w.isUnlocked(t) && w.bld[t] < 0 && !w.park[t]), 2);
@@ -68,7 +68,7 @@ function avenues() {
 }
 function lineAlong(horizontal: boolean, k: number, lo: number, hi: number) {
   const tiles: number[] = [];
-  for (let i = lo; i <= hi; i += 3) tiles.push(horizontal ? tileIdx(i, 20 + k) : tileIdx(20 + k, i));
+  for (let i = lo; i <= hi; i += 3) tiles.push(horizontal ? tileIdx(i, 32 + k) : tileIdx(32 + k, i));
   // keep a connected run of road tiles
   const ok: number[] = [];
   for (const t of tiles) { if (w.road[t] && w.stopKind[t] !== 2 && w.bld[t] < 0) ok.push(t); else if (ok.length >= 2) break; else ok.length = 0; }
@@ -76,7 +76,7 @@ function lineAlong(horizontal: boolean, k: number, lo: number, hi: number) {
 }
 function metroAcross(horizontal: boolean, k: number) {
   const tiles: number[] = [];
-  for (let i = 6; i <= 34; i += 7) tiles.push(horizontal ? tileIdx(i, 20 + k) : tileIdx(20 + k, i));
+  for (let i = 6; i <= 58; i += 7) tiles.push(horizontal ? tileIdx(i, 32 + k) : tileIdx(32 + k, i));
   const ok = tiles.filter((t) => w.isUnlocked(t) && !w.water[t] && w.bld[t] < 0 && w.stopKind[t] !== 1);
   if (ok.length >= 2) { const r = g.createMetroLine(ok); if (!r.ok) console.log('metro fail', r.msg); }
 }

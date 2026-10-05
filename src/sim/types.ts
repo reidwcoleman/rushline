@@ -14,7 +14,7 @@ export const cargoIdx = (c: Cargo) => CARGOS.indexOf(c);
 export interface Load { type: number; qty: number; fx: number; fz: number }
 export type Stage = 'child' | 'teen' | 'adult' | 'senior';
 export type TraitId = 'early' | 'night' | 'foodie' | 'home' | 'social' | 'driven' | 'green' | 'thrifty' | 'driver' | 'sporty' | 'grump' | 'sunny';
-export interface Needs { energy: number; hunger: number; fun: number; social: number; comfort: number }
+export interface Needs { energy: number; hunger: number; fun: number; social: number; comfort: number; hygiene: number; bladder: number }
 export interface LifeEntry { t: number; text: string }
 /** something a citizen has been told to do (or has arranged): go somewhere and stay a while */
 export interface Order {
@@ -137,6 +137,9 @@ export interface Person {
   since: number;          // sim time the bond began
   buffs: Buff[];          // temporary mood effects
   wish: Wish | null;      // what they hope for
+  skills: number[];       // cooking, fitness, logic, charisma, creativity (0..10, fractions are progress)
+  aspire: string;         // lifetime aspiration id, '' none yet
+  aspDone: boolean;
 }
 
 export interface Stop {

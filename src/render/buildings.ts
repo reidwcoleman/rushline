@@ -925,6 +925,17 @@ export class BuildingsView {
     this.add(b, now, true);
   }
 
+  /** take a building out of sight (when its inside is on show) or put it back */
+  setHidden(b: Building, hidden: boolean) {
+    const w = this.where.get(b.id);
+    if (!w) return;
+    if (hidden) {
+      tmpObj.position.set(0, -5, 0); tmpObj.scale.setScalar(0.0001); tmpObj.updateMatrix();
+      w.pool.mesh.setMatrixAt(w.slot, tmpObj.matrix);
+      w.pool.mesh.instanceMatrix.needsUpdate = true;
+    } else this.setMatrix(w.pool, w.slot, b, 1);
+  }
+
   rotate(b: Building) {
     const w = this.where.get(b.id);
     if (w) this.setMatrix(w.pool, w.slot, b, 1);

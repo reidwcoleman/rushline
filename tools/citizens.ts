@@ -13,16 +13,19 @@ g.money = 200000;
 const c = g.city;
 const report = (tag: string) => {
   const s = c.stats;
-  const needs = { energy: 0, hunger: 0, fun: 0, social: 0, comfort: 0 };
+  const needs = { energy: 0, hunger: 0, fun: 0, social: 0, comfort: 0, hygiene: 0, bladder: 0 };
+  const sk = [0, 0, 0, 0, 0]; let asp = 0, aspDone = 0;
   let nan = 0, bad = 0;
   for (const p of c.persons) {
     for (const k of Object.keys(needs) as (keyof typeof needs)[]) { needs[k] += p.needs[k]; if (!isFinite(p.needs[k]) || p.needs[k] < 0 || p.needs[k] > 1) nan++; }
     if (!isFinite(p.mood) || !isFinite(p.sat)) nan++;
+    for (let k = 0; k < 5; k++) { sk[k] += p.skills[k]; if (!isFinite(p.skills[k])) nan++; }
+    if (p.aspire) asp++; if (p.aspDone) aspDone++;
     if (p.work && !(p.work.workers.includes(p) || p.work.students.includes(p))) bad++;
     if (p.hh.members.indexOf(p) < 0 || p.home.residents.indexOf(p) < 0) bad++;
   }
   const n = Math.max(1, c.persons.length);
-  console.log(`${tag} d${g.day} h${g.hour.toFixed(0)} pop ${s.pop} (adult ${s.adults} kid ${s.kids} senior ${s.seniors} pupils ${s.pupils}) emp ${s.employed}/${s.adults} hh ${c.households.size} sat ${s.sat.toFixed(2)} mood ${s.mood.toFixed(2)} needs E${(needs.energy / n).toFixed(2)} H${(needs.hunger / n).toFixed(2)} F${(needs.fun / n).toFixed(2)} S${(needs.social / n).toFixed(2)} C${(needs.comfort / n).toFixed(2)} visits ${c.visits} stab ${g.stability.toFixed(0)} nan ${nan} bad ${bad}`);
+  console.log(`${tag} d${g.day} h${g.hour.toFixed(0)} pop ${s.pop} (adult ${s.adults} kid ${s.kids} senior ${s.seniors} pupils ${s.pupils}) emp ${s.employed}/${s.adults} hh ${c.households.size} sat ${s.sat.toFixed(2)} mood ${s.mood.toFixed(2)} needs E${(needs.energy / n).toFixed(2)} H${(needs.hunger / n).toFixed(2)} F${(needs.fun / n).toFixed(2)} S${(needs.social / n).toFixed(2)} C${(needs.comfort / n).toFixed(2)} Hy${(needs.hygiene / n).toFixed(2)} B${(needs.bladder / n).toFixed(2)} skills ${sk.map((v) => (v / n).toFixed(1)).join('/')} asp ${asp}/${aspDone} visits ${c.visits} stab ${g.stability.toFixed(0)} nan ${nan} bad ${bad}`);
 };
 report('start');
 const every = +(process.env.EVERY ?? 0.5);

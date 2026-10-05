@@ -7,12 +7,12 @@ page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) logs.pu
 page.on('pageerror', (e) => logs.push('[pageerror] ' + e.message));
 await page.goto('http://localhost:5330/?seed=7&play=1&demo=6', { waitUntil: 'load' });
 await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
-const before = await page.evaluate(() => { __hold(true); const g = __game; __app.lastSaveDay = 0; __app.autosave(); const w = g.world; let roads = 0; for (let i = 0; i < 1600; i++) if (w.road[i]) roads++; return { pop: g.city.stats.pop, bld: g.city.buildings.size, roads, lines: g.transit.lines.map((l) => l.kind + l.stops.length + ':' + l.vehicles.length), money: Math.round(g.money), t: Math.round(g.t), districts: w.districts.filter((d) => d.unlocked).length, hasSave: !!localStorage.getItem('rushline.save.v1') }; });
+const before = await page.evaluate(() => { __hold(true); const g = __game; __app.lastSaveDay = 0; __app.autosave(); const w = g.world; let roads = 0; for (let i = 0; i < 4096; i++) if (w.road[i]) roads++; return { pop: g.city.stats.pop, bld: g.city.buildings.size, roads, lines: g.transit.lines.map((l) => l.kind + l.stops.length + ':' + l.vehicles.length), money: Math.round(g.money), t: Math.round(g.t), districts: w.districts.filter((d) => d.unlocked).length, hasSave: !!localStorage.getItem('rushline.save.v1') }; });
 console.log('before', JSON.stringify(before));
 await page.goto('http://localhost:5330/?continue=1&play=1', { waitUntil: 'load' });
 await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
 await page.evaluate(() => { __view.fixedHour = 11; __cam(0, 0, 36, 0.7, 0.9); __pump(60); });
-const after = await page.evaluate(() => { const g = __game; const w = g.world; let roads = 0; for (let i = 0; i < 1600; i++) if (w.road[i]) roads++; return { pop: g.city.stats.pop, bld: g.city.buildings.size, roads, lines: g.transit.lines.map((l) => l.kind + l.stops.length + ':' + l.vehicles.length), money: Math.round(g.money), t: Math.round(g.t), districts: w.districts.filter((d) => d.unlocked).length, cars: g.traffic.vehicles.length }; });
+const after = await page.evaluate(() => { const g = __game; const w = g.world; let roads = 0; for (let i = 0; i < 4096; i++) if (w.road[i]) roads++; return { pop: g.city.stats.pop, bld: g.city.buildings.size, roads, lines: g.transit.lines.map((l) => l.kind + l.stops.length + ':' + l.vehicles.length), money: Math.round(g.money), t: Math.round(g.t), districts: w.districts.filter((d) => d.unlocked).length, cars: g.traffic.vehicles.length }; });
 console.log('after ', JSON.stringify(after));
 await page.screenshot({ path: 'shots/saved.png' });
 for (const l of logs.slice(0, 20)) console.log(l);
